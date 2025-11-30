@@ -9,7 +9,7 @@ import math
 st.set_page_config(page_title="S. Vihar Electricity Manager", page_icon="⚡")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. AUTHENTICATION & HELPER FUNCTIONS ---
+# --- 2. AUTHENTICATION ---
 
 def generate_captcha():
     if 'captcha_num1' not in st.session_state:
@@ -96,7 +96,11 @@ def admin_dashboard(user_details):
             sel_u = user_opts[sel_u_name]
             
             c_up1, c_up2 = st.columns(2)
-            new_count = c_up1.number_input(f"People in {sel_u_name}'s Flat", value=sel_u.get('num_people', 0) or 0, min_value=0)
+            # SAFETY FIX: Ensure 'num_people' is not None
+            current_count = sel_u.get('num_people')
+            if current_count is None: current_count = 0
+            
+            new_count = c_up1.number_input(f"People in {sel_u_name}'s Flat", value=int(current_count), min_value=0)
             
             if c_up2.button("Update Database"):
                 try:
@@ -110,21 +114,25 @@ def admin_dashboard(user_details):
     with tab2:
         st.subheader("Main Meter Readings")
         
-        # 1. Select Meter & Date (Date added back here!)
         col_sel1, col_sel2 = st.columns(2)
         meter_type = col_sel1.radio("Select Floor:", ["Ground Meter", "Middle Meter", "Upper Meter"], horizontal=True)
         bill_date = col_sel2.date_input("Bill Date", value=date.today(), key="main_date")
 
         # Auto-fetch Main Meter Previous Reading
+        default_prev = 0
         try:
             last_meter_data = conn.table("main_meters").select("current_reading").eq("meter_name", meter_type).order("created_at", desc=True).limit(1).execute()
-            default_prev = last_meter_data.data[0]['current_reading'] if last_meter_data.data else 0
+            if last_meter_data.data:
+                # SAFETY FIX: Handle NoneType if DB has empty column
+                fetched_val = last_meter_data.data[0]['current_reading']
+                default_prev = fetched_val if fetched_val is not None else 0
         except:
             default_prev = 0
 
         # --- LIVE INPUTS ---
         st.markdown(f"### 1. {meter_type} (Main)")
         col_m1, col_m2, col_m3 = st.columns(3)
+        # SAFETY FIX: Force int(default_prev) to avoid crash
         mm_prev = col_m1.number_input("Main Prev", min_value=0, value=int(default_prev))
         mm_curr = col_m2.number_input("Main Curr", min_value=0, value=int(default_prev))
         mm_bill = col_m3.number_input("Total Bill (₹)", min_value=0.0)
@@ -205,7 +213,7 @@ def admin_dashboard(user_details):
             try:
                 conn.table("main_meters").insert({
                     "meter_name": meter_type,
-                    "bill_month": str(bill_date), # Uses selected date
+                    "bill_month": str(bill_date),
                     "previous_reading": mm_prev,
                     "current_reading": mm_curr,
                     "units_consumed": mm_units,
@@ -229,6 +237,7 @@ def admin_dashboard(user_details):
         total_water_units = 0
         if gm_data.data:
             gm_entry = gm_data.data[0]
+            # SAFETY FIX: Handle None values
             gm_rate = gm_entry.get('calculated_rate') or 5.50
             total_water_units = gm_entry.get('water_units') or 0
         
@@ -236,6 +245,7 @@ def admin_dashboard(user_details):
         all_tenants = conn.table("profiles").select("num_people").eq("role", "tenant").execute()
         total_people_count = 0
         if all_tenants.data:
+            # SAFETY FIX: Handle None values in sum
             total_people_count = sum([(t.get('num_people') or 0) for t in all_tenants.data])
             
         if total_people_count == 0: total_people_count = 1
@@ -255,18 +265,29 @@ def admin_dashboard(user_details):
             bill_date_tenant = col_t_sel2.date_input("Bill Date", value=date.today(), key="tenant_date")
             
             # Auto-Fetch Previous Reading
-            last_bill = conn.table("bills").select("current_reading").eq("user_id", selected_user['id']).order("created_at", desc=True).limit(1).execute()
-            t_prev_def = last_bill.data[0]['current_reading'] if last_bill.data else 0
+            t_prev_def = 0
+            try:
+                last_bill = conn.table("bills").select("current_reading").eq("user_id", selected_user['id']).order("created_at", desc=True).limit(1).execute()
+                if last_bill.data:
+                    fetched_t_prev = last_bill.data[0]['current_reading']
+                    t_prev_def = fetched_t_prev if fetched_t_prev is not None else 0
+            except:
+                t_prev_def = 0
             
             # --- LIVE BILL CALCULATOR ---
             c_t1, c_t2 = st.columns(2)
+            # SAFETY FIX: Force int()
             t_prev = c_t1.number_input("Previous", min_value=0, value=int(t_prev_def))
             t_curr = c_t2.number_input("Current", min_value=0, value=int(t_prev_def))
             t_rate = st.number_input("Rate (₹)", value=float(gm_rate), format="%.4f")
             
             # Calculations
             t_elec_units = t_curr - t_prev
-            t_people = selected_user.get('num_people') or 0
+            
+            # SAFETY FIX: Handle None for tenant people
+            t_people = selected_user.get('num_people')
+            if t_people is None: t_people = 0
+            
             t_water_units = units_per_person * t_people
             
             t_elec_cost = t_elec_units * t_rate
@@ -288,7 +309,7 @@ def admin_dashboard(user_details):
                     conn.table("bills").insert({
                         "user_id": selected_user['id'],
                         "customer_name": selected_user['full_name'],
-                        "bill_month": str(bill_date_tenant), # Uses selected date
+                        "bill_month": str(bill_date_tenant),
                         "previous_reading": t_prev,
                         "current_reading": t_curr,
                         "units_consumed": t_elec_units,
@@ -320,9 +341,13 @@ def tenant_dashboard(user_details):
         df = pd.DataFrame(res.data)
         latest = df.iloc[0]
         
-        # Combine Units
-        w_units = latest.get('tenant_water_units') or 0
-        e_units = latest.get('units_consumed') or 0
+        # Combine Units (Handle None values safely)
+        w_units = latest.get('tenant_water_units')
+        if w_units is None: w_units = 0
+        
+        e_units = latest.get('units_consumed')
+        if e_units is None: e_units = 0
+        
         combined_units = e_units + w_units
         
         st.markdown(f"""
