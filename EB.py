@@ -277,13 +277,18 @@ def admin_dashboard(user_details):
         col_gen1, col_gen2 = st.columns(2)
         gen_date = col_gen1.date_input("Bill Date for Generation", value=date.today())
         
+        # --- FIXED FETCHING LOGIC ---
         rates_data = {}
         water_stats = {"units": 0, "rate": 0}
         
-        # 1. Fetch Main Meter Data
         try:
-            mm_res = conn.table("main_meters").select("*").eq("bill_month", str(gen_date)).execute()
+            # Match Year and Month to be robust
+            start_date = date(gen_date.year, gen_date.month, 1)
+            # Fetch all readings for THIS MONTH (ignoring exact day match)
+            mm_res = conn.table("main_meters").select("*").gte("bill_month", str(start_date)).execute()
+            
             for m in mm_res.data:
+                # Store rate
                 rates_data[m['meter_name']] = m['calculated_rate']
                 if m['meter_name'] == "Ground Meter":
                     water_stats["units"] = m.get('water_units', 0)
@@ -291,9 +296,9 @@ def admin_dashboard(user_details):
         except: pass
         
         if not rates_data:
-            st.warning("⚠️ No Main Meter data found for this date. Go to 'Main Meters' tab and Save first.")
+            st.warning("⚠️ No Main Meter data found for this month.")
         else:
-            st.success(f"Rates Loaded: {len(rates_data)} Meters found.")
+            st.success(f"Rates Loaded for {gen_date.strftime('%B %Y')}")
 
             # 2. Water Logic
             all_tenants = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
@@ -323,27 +328,28 @@ def admin_dashboard(user_details):
                         flat = t.get('flat_number', 'Unknown')
                         name = t.get('full_name', 'Unknown')
                         
-                        # --- DATA FETCHING (Improved) ---
-                        
-                        # A. Electricity Data (Direct from Sub-Meter Table)
-                        # We use the 'units_consumed' we saved in Tab 2. No more math guessing!
+                        # --- DATA FETCHING (FIXED) ---
                         elec_units = 0
                         t_prev = 0
                         t_curr = 0
+                        
                         try:
-                            sub_res = conn.table("sub_meter_readings").select("*").eq("flat_number", flat).eq("bill_month", str(gen_date)).execute()
+                            # Fetch ANY sub-reading for this Flat in this Month
+                            start_date_str = str(date(gen_date.year, gen_date.month, 1))
+                            sub_res = conn.table("sub_meter_readings").select("*").eq("flat_number", flat).gte("bill_month", start_date_str).limit(1).execute()
+                            
                             if sub_res.data:
                                 row = sub_res.data[0]
                                 elec_units = row['units_consumed']
                                 t_prev = row['previous_reading']
                                 t_curr = row['current_reading']
+                                st.caption(f"✅ Found reading from {row['bill_month']}")
                         except: pass
                         
-                        # B. Rate
+                        # Calculate
                         rate = get_meter_rate_for_flat(flat, rates_data)
                         elec_cost = elec_units * rate
                         
-                        # C. Water
                         people = t.get('num_people') or 0
                         water_share_units = units_per_person * people
                         water_rate = rates_data.get('Ground Meter', 0)
@@ -374,14 +380,14 @@ def admin_dashboard(user_details):
                             "total_amount": total_amt, "status": "Pending"
                         }
                         
-                        # Valid if we found electricity data OR water data
+                        # Logic: Allow generation if we have readings OR if just water bill (e.g. flat closed)
                         if t_curr > 0 or water_cost > 0:
                             bill_batch.append(bill_obj)
                             if st.button(f"Generate Bill for {name}", key=f"btn_{t['id']}"):
                                 conn.table("bills").upsert(bill_obj, on_conflict="user_id, bill_month").execute()
                                 st.success(f"Generated for {name}!")
                         else:
-                            st.error("No meter data found. Did you save 'Main Meters' for this month?")
+                            st.error("No meter data found. Save Main Meters first.")
 
             st.divider()
             if st.button("🚀 GENERATE ALL BILLS (Batch)", type="primary"):
