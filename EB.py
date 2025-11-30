@@ -9,7 +9,7 @@ import math
 st.set_page_config(page_title="S. Vihar Electricity Manager", page_icon="⚡")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. AUTHENTICATION ---
+# --- 2. AUTHENTICATION & HELPER FUNCTIONS ---
 
 def generate_captcha():
     if 'captcha_num1' not in st.session_state:
@@ -109,9 +109,13 @@ def admin_dashboard(user_details):
     # --- TAB 2: MAIN METERS CALCULATOR ---
     with tab2:
         st.subheader("Main Meter Readings")
-        meter_type = st.radio("Select Floor:", ["Ground Meter", "Middle Meter", "Upper Meter"], horizontal=True)
         
-        # Auto-fetch Main Meter Previous Reading Only
+        # 1. Select Meter & Date (Date added back here!)
+        col_sel1, col_sel2 = st.columns(2)
+        meter_type = col_sel1.radio("Select Floor:", ["Ground Meter", "Middle Meter", "Upper Meter"], horizontal=True)
+        bill_date = col_sel2.date_input("Bill Date", value=date.today(), key="main_date")
+
+        # Auto-fetch Main Meter Previous Reading
         try:
             last_meter_data = conn.table("main_meters").select("current_reading").eq("meter_name", meter_type).order("created_at", desc=True).limit(1).execute()
             default_prev = last_meter_data.data[0]['current_reading'] if last_meter_data.data else 0
@@ -141,19 +145,16 @@ def admin_dashboard(user_details):
             st.markdown("### 2. Sub-Meters (Flats)")
             c_g1, c_g2 = st.columns(2)
             
-            # Submeter 101 (Start at 0 to avoid bugs)
             c_g1.write("**G2BHK (101)**")
             g1_prev = c_g1.number_input("101 Prev", min_value=0, key="g1p")
             g1_curr = c_g1.number_input("101 Curr", min_value=0, key="g1c")
             g1_units = g1_curr - g1_prev
             
-            # Submeter 102
             c_g2.write("**G1RK (102)**")
             g2_prev = c_g2.number_input("102 Prev", min_value=0, key="g2p")
             g2_curr = c_g2.number_input("102 Curr", min_value=0, key="g2c")
             g2_units = g2_curr - g2_prev
             
-            # Logic: Main - (101 + 102)
             flat_units = g1_units + g2_units
             water_units = mm_units - flat_units
             if water_units < 0: water_units = 0
@@ -171,7 +172,7 @@ def admin_dashboard(user_details):
             m201_curr = c_m2.number_input("201 Current", min_value=0, key="m201c")
             
             m201_units = m201_curr - m201_prev
-            m202_units = mm_units - m201_units # Remainder is 202
+            m202_units = mm_units - m201_units 
             if m202_units < 0: m202_units = 0
             
             st.divider()
@@ -204,7 +205,7 @@ def admin_dashboard(user_details):
             try:
                 conn.table("main_meters").insert({
                     "meter_name": meter_type,
-                    "bill_month": str(date.today()),
+                    "bill_month": str(bill_date), # Uses selected date
                     "previous_reading": mm_prev,
                     "current_reading": mm_curr,
                     "units_consumed": mm_units,
@@ -213,7 +214,7 @@ def admin_dashboard(user_details):
                     "water_units": water_units,
                     "water_cost": water_cost
                 }).execute()
-                st.success("✅ Saved successfully!")
+                st.success(f"✅ Saved successfully for {bill_date}!")
             except Exception as e:
                 st.error(f"❌ Save Failed: {e}")
 
@@ -226,7 +227,6 @@ def admin_dashboard(user_details):
         
         gm_rate = 5.50
         total_water_units = 0
-        
         if gm_data.data:
             gm_entry = gm_data.data[0]
             gm_rate = gm_entry.get('calculated_rate') or 5.50
@@ -243,13 +243,16 @@ def admin_dashboard(user_details):
         
         st.info(f"📊 **Water Calculation:** {total_water_units} Units ÷ {total_people_count} People = **{units_per_person:.2f} Units/Person**")
 
-        # 3. Select Tenant
+        # 3. Select Tenant & Date
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").execute()
         tenant_options = {f"{u['full_name']}": u for u in users_resp.data}
         
+        col_t_sel1, col_t_sel2 = st.columns(2)
         if tenant_options:
-            selected_label = st.selectbox("Select Tenant", list(tenant_options.keys()))
+            selected_label = col_t_sel1.selectbox("Select Tenant", list(tenant_options.keys()))
             selected_user = tenant_options[selected_label]
+            
+            bill_date_tenant = col_t_sel2.date_input("Bill Date", value=date.today(), key="tenant_date")
             
             # Auto-Fetch Previous Reading
             last_bill = conn.table("bills").select("current_reading").eq("user_id", selected_user['id']).order("created_at", desc=True).limit(1).execute()
@@ -285,7 +288,7 @@ def admin_dashboard(user_details):
                     conn.table("bills").insert({
                         "user_id": selected_user['id'],
                         "customer_name": selected_user['full_name'],
-                        "bill_month": str(date.today()),
+                        "bill_month": str(bill_date_tenant), # Uses selected date
                         "previous_reading": t_prev,
                         "current_reading": t_curr,
                         "units_consumed": t_elec_units,
