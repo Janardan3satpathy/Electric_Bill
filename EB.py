@@ -4,6 +4,7 @@ from datetime import date
 from st_supabase_connection import SupabaseConnection
 import random
 import math
+import time
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="S. Vihar Electricity Manager", page_icon="⚡", layout="wide")
@@ -76,9 +77,7 @@ def logout():
 
 # --- 3. HELPER FUNCTIONS ---
 def get_last_month_reading(flat_number, current_date):
-    """Fetches the 'Current Reading' of the previous entry to use as 'Previous Reading'."""
     try:
-        # Fetch the most recent reading BEFORE the current date
         res = conn.table("sub_meter_readings").select("current_reading").eq("flat_number", flat_number).lt("bill_month", str(current_date)).order("bill_month", desc=True).limit(1).execute()
         if res.data:
             return res.data[0]['current_reading']
@@ -98,10 +97,39 @@ def get_meter_rate_for_flat(flat_number, rates_data):
 def admin_dashboard(user_details):
     st.title(f"Admin Dashboard 🛠️")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["👥 Tenants & Flats", "🏢 Main Meters", "⚡ Generate Bills", "📊 Records"])
+    # ADDED "Payment Approvals" TAB
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["💰 Payment Approvals", "👥 Tenants & Flats", "🏢 Main Meters", "⚡ Generate Bills", "📊 Records"])
 
-    # --- TAB 1: MANAGE TENANT DETAILS ---
+    # --- TAB 1: PAYMENT APPROVALS (NEW) ---
     with tab1:
+        st.subheader("Pending Approvals")
+        
+        # Fetch bills with status 'Verifying'
+        pending_approvals = conn.table("bills").select("*").eq("status", "Verifying").execute()
+        
+        if pending_approvals.data:
+            for bill in pending_approvals.data:
+                with st.expander(f"Cash/Online Claim: {bill['customer_name']} - ₹{bill['total_amount']}"):
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    c1.write(f"**Date:** {bill['bill_month']}")
+                    c1.write(f"**Amount:** ₹{bill['total_amount']}")
+                    
+                    if c2.button("✅ Approve", key=f"app_{bill['id']}"):
+                        conn.table("bills").update({"status": "Paid"}).eq("id", bill['id']).execute()
+                        st.success(f"Payment Confirmed for {bill['customer_name']}!")
+                        time.sleep(1)
+                        st.rerun()
+                        
+                    if c3.button("❌ Reject", key=f"rej_{bill['id']}"):
+                        conn.table("bills").update({"status": "Pending"}).eq("id", bill['id']).execute()
+                        st.error("Payment Rejected. Status reset to Pending.")
+                        time.sleep(1)
+                        st.rerun()
+        else:
+            st.info("No pending payment approvals.")
+
+    # --- TAB 2: MANAGE TENANT DETAILS ---
+    with tab2:
         st.subheader("Link Tenants to Flats")
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").order("full_name").execute()
         
@@ -129,15 +157,14 @@ def admin_dashboard(user_details):
                     st.success("✅ Updated!")
                     st.rerun()
 
-    # --- TAB 2: MAIN METERS CALCULATOR ---
-    with tab2:
+    # --- TAB 3: MAIN METERS CALCULATOR ---
+    with tab3:
         st.subheader("Main Meter & Sub-Meter Readings")
         
         col_sel1, col_sel2 = st.columns(2)
         meter_type = col_sel1.radio("Select Floor:", ["Ground Meter", "Middle Meter", "Upper Meter"], horizontal=True)
         bill_date = col_sel2.date_input("Bill Date", value=date.today())
 
-        # Auto-fetch Main Meter Previous Reading (From a previous month)
         main_prev = 0
         try:
             last_meter = conn.table("main_meters").select("current_reading").eq("meter_name", meter_type).lt("bill_month", str(bill_date)).order("bill_month", desc=True).limit(1).execute()
@@ -157,14 +184,12 @@ def admin_dashboard(user_details):
         
         water_units = 0
         water_cost = 0.0
-        sub_readings_to_save = [] # List of dicts to save
+        sub_readings_to_save = [] 
 
-        # --- FLOOR LOGIC ---
         if meter_type == "Ground Meter":
             st.markdown("### 2. Sub-Meters (Editable)")
             c_g1, c_g2 = st.columns(2)
             
-            # 101
             p101 = get_last_month_reading("101", bill_date)
             c_g1.write(f"**G2BHK (101)**")
             g1_prev = c_g1.number_input("101 Prev", min_value=0, value=int(p101), key="101p")
@@ -172,7 +197,6 @@ def admin_dashboard(user_details):
             g1_units = g1_curr - g1_prev
             sub_readings_to_save.append({"flat": "101", "prev": g1_prev, "curr": g1_curr, "units": g1_units})
             
-            # 102
             p102 = get_last_month_reading("102", bill_date)
             c_g2.write(f"**G1RK (102)**")
             g2_prev = c_g2.number_input("102 Prev", min_value=0, value=int(p102), key="102p")
@@ -180,9 +204,7 @@ def admin_dashboard(user_details):
             g2_units = g2_curr - g2_prev
             sub_readings_to_save.append({"flat": "102", "prev": g2_prev, "curr": g2_curr, "units": g2_units})
             
-            # Water Math
-            flat_units = g1_units + g2_units
-            water_units = mm_units - flat_units
+            water_units = mm_units - (g1_units + g2_units)
             if water_units < 0: water_units = 0
             water_cost = water_units * mm_rate
             st.success(f"💧 Water: {water_units} Units (₹{water_cost:.2f})")
@@ -191,7 +213,6 @@ def admin_dashboard(user_details):
             st.markdown("### 2. Sub-Meters (Editable)")
             c_m1, c_m2 = st.columns(2)
             
-            # 201
             p201 = get_last_month_reading("201", bill_date)
             c_m1.write(f"**3BHK1 (201)**")
             m201_prev = c_m1.number_input("201 Prev", min_value=0, value=int(p201), key="201p")
@@ -199,11 +220,9 @@ def admin_dashboard(user_details):
             m201_units = m201_curr - m201_prev
             sub_readings_to_save.append({"flat": "201", "prev": m201_prev, "curr": m201_curr, "units": m201_units})
             
-            # 202 (Auto Calc)
             m202_units = mm_units - m201_units
             if m202_units < 0: m202_units = 0
             
-            # For consistency, we save 202 data too (virtual reading)
             p202 = get_last_month_reading("202", bill_date)
             m202_curr = p202 + m202_units
             sub_readings_to_save.append({"flat": "202", "prev": p202, "curr": m202_curr, "units": m202_units})
@@ -214,7 +233,6 @@ def admin_dashboard(user_details):
             st.markdown("### 2. Sub-Meters (Editable)")
             c_u1, c_u2 = st.columns(2)
             
-            # 301
             p301 = get_last_month_reading("301", bill_date)
             c_u1.write(f"**3BHK2 (301)**")
             u301_prev = c_u1.number_input("301 Prev", min_value=0, value=int(p301), key="301p")
@@ -222,7 +240,6 @@ def admin_dashboard(user_details):
             u301_units = u301_curr - u301_prev
             sub_readings_to_save.append({"flat": "301", "prev": u301_prev, "curr": u301_curr, "units": u301_units})
             
-            # 401
             p401 = get_last_month_reading("401", bill_date)
             c_u2.write(f"**1RK2 (401)**")
             u401_prev = c_u2.number_input("401 Prev", min_value=0, value=int(p401), key="401p")
@@ -230,7 +247,6 @@ def admin_dashboard(user_details):
             u401_units = u401_curr - u401_prev
             sub_readings_to_save.append({"flat": "401", "prev": u401_prev, "curr": u401_curr, "units": u401_units})
             
-            # 302 (Auto Calc)
             u302_units = mm_units - (u301_units + u401_units)
             if u302_units < 0: u302_units = 0
             
@@ -240,10 +256,8 @@ def admin_dashboard(user_details):
             
             st.success(f"🏠 **302 Units (Auto):** {u302_units}")
 
-        # --- SAVE ---
         if st.button(f"Save {meter_type} & Sub-Meters"):
             try:
-                # 1. Upsert Main Meter
                 conn.table("main_meters").upsert({
                     "meter_name": meter_type,
                     "bill_month": str(bill_date),
@@ -256,7 +270,6 @@ def admin_dashboard(user_details):
                     "water_cost": water_cost
                 }, on_conflict="meter_name, bill_month").execute()
                 
-                # 2. Upsert Sub Meters (The Critical Update)
                 for item in sub_readings_to_save:
                     conn.table("sub_meter_readings").upsert({
                         "flat_number": item['flat'],
@@ -266,29 +279,23 @@ def admin_dashboard(user_details):
                         "units_consumed": item['units']
                     }, on_conflict="flat_number, bill_month").execute()
                     
-                st.success(f"✅ Saved Main Meter and {len(sub_readings_to_save)} Sub-Meters!")
+                st.success(f"✅ Saved Main Meter and Updated Sub-Meters!")
             except Exception as e:
                 st.error(f"❌ Error: {e}")
 
-    # --- TAB 3: GENERATE BILLS ---
-    with tab3:
+    # --- TAB 4: GENERATE BILLS ---
+    with tab4:
         st.subheader("Generate Monthly Bills")
         
         col_gen1, col_gen2 = st.columns(2)
         gen_date = col_gen1.date_input("Bill Date for Generation", value=date.today())
         
-        # --- FIXED FETCHING LOGIC ---
         rates_data = {}
         water_stats = {"units": 0, "rate": 0}
         
         try:
-            # Match Year and Month to be robust
-            start_date = date(gen_date.year, gen_date.month, 1)
-            # Fetch all readings for THIS MONTH (ignoring exact day match)
-            mm_res = conn.table("main_meters").select("*").gte("bill_month", str(start_date)).execute()
-            
+            mm_res = conn.table("main_meters").select("*").eq("bill_month", str(gen_date)).execute()
             for m in mm_res.data:
-                # Store rate
                 rates_data[m['meter_name']] = m['calculated_rate']
                 if m['meter_name'] == "Ground Meter":
                     water_stats["units"] = m.get('water_units', 0)
@@ -296,11 +303,10 @@ def admin_dashboard(user_details):
         except: pass
         
         if not rates_data:
-            st.warning("⚠️ No Main Meter data found for this month.")
+            st.warning("⚠️ No Main Meter data found for this date. Save Main Meters first.")
         else:
-            st.success(f"Rates Loaded for {gen_date.strftime('%B %Y')}")
+            st.success(f"Rates Loaded! Ground: {rates_data.get('Ground Meter',0):.2f}")
 
-            # 2. Water Logic
             all_tenants = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
             total_people = sum([(t.get('num_people') or 0) for t in all_tenants.data]) if all_tenants.data else 1
             if total_people == 0: total_people = 1
@@ -308,7 +314,6 @@ def admin_dashboard(user_details):
             
             st.info(f"💧 Water Share: {water_stats['units']} Units ÷ {total_people} People = **{units_per_person:.2f} Units/Head**")
 
-            # 3. PREVIEW & GENERATE
             st.markdown("### 📋 Tenant Bill Preview")
             
             h1, h2, h3, h4, h5, h6, h7 = st.columns([2, 1, 1, 1, 1, 1, 2])
@@ -328,25 +333,18 @@ def admin_dashboard(user_details):
                         flat = t.get('flat_number', 'Unknown')
                         name = t.get('full_name', 'Unknown')
                         
-                        # --- DATA FETCHING (FIXED) ---
-                        elec_units = 0
                         t_prev = 0
                         t_curr = 0
-                        
+                        elec_units = 0
                         try:
-                            # Fetch ANY sub-reading for this Flat in this Month
-                            start_date_str = str(date(gen_date.year, gen_date.month, 1))
-                            sub_res = conn.table("sub_meter_readings").select("*").eq("flat_number", flat).gte("bill_month", start_date_str).limit(1).execute()
-                            
+                            sub_res = conn.table("sub_meter_readings").select("*").eq("flat_number", flat).eq("bill_month", str(gen_date)).execute()
                             if sub_res.data:
                                 row = sub_res.data[0]
-                                elec_units = row['units_consumed']
                                 t_prev = row['previous_reading']
                                 t_curr = row['current_reading']
-                                st.caption(f"✅ Found reading from {row['bill_month']}")
+                                elec_units = row['units_consumed']
                         except: pass
                         
-                        # Calculate
                         rate = get_meter_rate_for_flat(flat, rates_data)
                         elec_cost = elec_units * rate
                         
@@ -357,17 +355,16 @@ def admin_dashboard(user_details):
                         
                         total_amt = math.ceil(elec_cost + water_cost)
 
-                        # --- DISPLAY ---
                         col_d1, col_d2 = st.columns(2)
                         with col_d1:
                             st.write(f"**⚡ Electricity**")
                             st.write(f"`{elec_units} Units` × `₹{rate:.4f}` = **₹{elec_cost:.2f}**")
-                            st.caption(f"Readings: {t_curr} (Curr) - {t_prev} (Prev)")
+                            st.caption(f"Readings: {t_curr} - {t_prev}")
 
                         with col_d2:
                             st.write(f"**💧 Water Share**")
                             st.write(f"`{water_share_units:.2f} Units` × `₹{water_rate:.4f}` = **₹{water_cost:.2f}**")
-                            st.caption(f"({people} People × {units_per_person:.2f} Units/Head)")
+                            st.caption(f"({people} People × {units_per_person:.2f} Units)")
                             
                         st.divider()
                         st.markdown(f"#### Total: ₹{elec_cost:.2f} + ₹{water_cost:.2f} = **₹{total_amt}**")
@@ -380,7 +377,6 @@ def admin_dashboard(user_details):
                             "total_amount": total_amt, "status": "Pending"
                         }
                         
-                        # Logic: Allow generation if we have readings OR if just water bill (e.g. flat closed)
                         if t_curr > 0 or water_cost > 0:
                             bill_batch.append(bill_obj)
                             if st.button(f"Generate Bill for {name}", key=f"btn_{t['id']}"):
@@ -401,35 +397,58 @@ def admin_dashboard(user_details):
                 else:
                     st.warning("No valid readings found.")
 
-    # --- TAB 4: RECORDS ---
-    with tab4:
+    # --- TAB 5: RECORDS ---
+    with tab5:
         st.subheader("Records")
         if st.button("Refresh"): st.rerun()
         res = conn.table("bills").select("*").order("created_at", desc=True).limit(10).execute()
         if res.data:
-            st.dataframe(pd.DataFrame(res.data)[['customer_name', 'bill_month', 'total_amount', 'units_consumed', 'tenant_water_units']])
+            st.dataframe(pd.DataFrame(res.data)[['customer_name', 'bill_month', 'total_amount', 'units_consumed', 'status']])
 
-# --- 5. TENANT DASHBOARD ---
+# --- 5. TENANT DASHBOARD (With Verify Flow) ---
 def tenant_dashboard(user_details):
     st.title(f"Welcome, {user_details.get('full_name')} 👋")
-    res = conn.table("bills").select("*").eq("user_id", user_details['id']).order("created_at", desc=True).execute()
     
+    # Show Pending or Verifying Bill
+    pending_bill = conn.table("bills").select("*").eq("user_id", user_details['id']).neq("status", "Paid").order("created_at", desc=True).limit(1).execute()
+    
+    if pending_bill.data:
+        bill = pending_bill.data[0]
+        
+        if bill['status'] == "Pending":
+            st.error(f"⚠️ **Pending Bill:** ₹{bill['total_amount']} ({bill['bill_month']})")
+            
+            with st.expander("💳 PAY NOW (UPI)", expanded=True):
+                amount = bill['total_amount']
+                upi_id = "s.vihar@upi" # Replace with real one if needed
+                upi_url = f"upi://pay?pa={upi_id}&pn=S_Vihar_Society&am={amount}&cu=INR"
+                qr_api = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={upi_url}"
+                
+                c1, c2 = st.columns([1, 2])
+                c1.image(qr_api, caption="Scan with GPay/PhonePe")
+                c2.write("1. Scan QR\n2. Pay Amount\n3. Click 'I have Paid' below")
+                
+                if c2.button("✅ I have Paid (Cash or UPI)"):
+                    conn.table("bills").update({"status": "Verifying"}).eq("id", bill['id']).execute()
+                    st.info("Sent for verification! Please wait for Admin approval.")
+                    time.sleep(2)
+                    st.rerun()
+                    
+        elif bill['status'] == "Verifying":
+            st.warning("⏳ **Payment under Verification**")
+            st.write("You have marked this bill as paid. Please wait for the Admin to confirm.")
+            st.info(f"Bill Date: {bill['bill_month']} | Amount: ₹{bill['total_amount']}")
+    
+    st.divider()
+    
+    res = conn.table("bills").select("*").eq("user_id", user_details['id']).order("created_at", desc=True).execute()
     if res.data:
         df = pd.DataFrame(res.data)
-        latest = df.iloc[0]
-        combined_units = (latest.get('units_consumed') or 0) + (latest.get('tenant_water_units') or 0)
-        
-        st.markdown(f"""
-        <div style="padding:20px; border-radius:10px; background-color:#e8f4f8; border:1px solid #d1d5db;">
-            <h3>Latest Bill: {latest['bill_month']}</h3>
-            <h1 style="color:#0078D7;">₹{latest['total_amount']}</h1>
-            <p>Total Units: {combined_units:.2f} | Rate: ₹{latest['rate_per_unit']:.2f}</p>
-            <p>Status: <b>{latest['status']}</b></p>
-        </div>
-        """, unsafe_allow_html=True)
-        st.dataframe(df[['bill_month', 'total_amount', 'status']], hide_index=True)
+        st.write("### 📜 Billing History")
+        df['Total Units'] = df['units_consumed'] + df['tenant_water_units']
+        st.dataframe(df[['bill_month', 'Total Units', 'total_amount', 'status']], hide_index=True)
     else:
-        st.info("No bills generated yet.")
+        st.info("No bill history found.")
 
 # --- 6. MAIN ---
 def main():
