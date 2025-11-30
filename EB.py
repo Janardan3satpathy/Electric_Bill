@@ -420,7 +420,7 @@ def tenant_dashboard(user_details):
             
             with st.expander("💳 PAY NOW (UPI)", expanded=True):
                 amount = bill['total_amount']
-                upi_id = "s.vihar@upi" # Replace with real one if needed
+                upi_id = "8249393625@upi" # Replace with real one if needed
                 upi_url = f"upi://pay?pa={upi_id}&pn=S_Vihar_Society&am={amount}&cu=INR"
                 qr_api = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={upi_url}"
                 
