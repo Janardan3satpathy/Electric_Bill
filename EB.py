@@ -154,19 +154,23 @@ def admin_dashboard(user_details):
         sub_readings_to_save = [] 
 
         if meter_type == "Ground Meter":
-            st.markdown("### 2. Sub-Meters")
+            st.markdown("### 2. Sub-Meters (Editable)")
             c_g1, c_g2 = st.columns(2)
             
-            p101 = get_prev_reading("101")
-            c_g1.write(f"**G2BHK (101)** (Prev: {p101})")
-            g1_curr = c_g1.number_input("101 Current", min_value=0, value=0, key="101c")
-            g1_units = g1_curr - p101
+            # 101 - Make Prev Editable
+            p101_auto = get_prev_reading("101")
+            c_g1.write("**G2BHK (101)**")
+            g1_prev = c_g1.number_input("101 Prev", min_value=0, value=int(p101_auto), key="101p")
+            g1_curr = c_g1.number_input("101 Curr", min_value=0, value=0, key="101c")
+            g1_units = g1_curr - g1_prev
             sub_readings_to_save.append({"flat": "101", "val": g1_curr})
             
-            p102 = get_prev_reading("102")
-            c_g2.write(f"**G1RK (102)** (Prev: {p102})")
-            g2_curr = c_g2.number_input("102 Current", min_value=0, value=0, key="102c")
-            g2_units = g2_curr - p102
+            # 102 - Make Prev Editable
+            p102_auto = get_prev_reading("102")
+            c_g2.write("**G1RK (102)**")
+            g2_prev = c_g2.number_input("102 Prev", min_value=0, value=int(p102_auto), key="102p")
+            g2_curr = c_g2.number_input("102 Curr", min_value=0, value=0, key="102c")
+            g2_units = g2_curr - g2_prev
             sub_readings_to_save.append({"flat": "102", "val": g2_curr})
             
             water_units = mm_units - (g1_units + g2_units)
@@ -175,45 +179,52 @@ def admin_dashboard(user_details):
             st.success(f"💧 Water Units: {water_units}")
 
         elif meter_type == "Middle Meter":
-            st.markdown("### 2. Sub-Meters")
+            st.markdown("### 2. Sub-Meters (Editable)")
             c_m1, c_m2 = st.columns(2)
             
-            p201 = get_prev_reading("201")
-            st.write(f"**3BHK1 (201)** (Prev: {p201})")
-            m201_curr = st.number_input("201 Current", min_value=0, value=0, key="201c")
-            m201_units = m201_curr - p201
+            # 201 - Make Prev Editable
+            p201_auto = get_prev_reading("201")
+            c_m1.write("**3BHK1 (201)**")
+            m201_prev = c_m1.number_input("201 Prev", min_value=0, value=int(p201_auto), key="201p")
+            m201_curr = c_m1.number_input("201 Curr", min_value=0, value=0, key="201c")
+            m201_units = m201_curr - m201_prev
             sub_readings_to_save.append({"flat": "201", "val": m201_curr})
             
             m202_units = mm_units - m201_units
             if m202_units < 0: m202_units = 0
             
-            p202 = get_prev_reading("202")
-            m202_curr = p202 + m202_units
+            # Virtual Reading for 202
+            p202_auto = get_prev_reading("202")
+            m202_curr = p202_auto + m202_units
             sub_readings_to_save.append({"flat": "202", "val": m202_curr})
             
             st.success(f"🏠 **202 Units (Auto):** {m202_units}")
 
         elif meter_type == "Upper Meter":
-            st.markdown("### 2. Sub-Meters")
+            st.markdown("### 2. Sub-Meters (Editable)")
             c_u1, c_u2 = st.columns(2)
             
-            p301 = get_prev_reading("301")
-            c_u1.write(f"**3BHK2 (301)** (Prev: {p301})")
-            u301_curr = c_u1.number_input("301 Current", min_value=0, value=0, key="301c")
-            u301_units = u301_curr - p301
+            # 301 - Make Prev Editable
+            p301_auto = get_prev_reading("301")
+            c_u1.write("**3BHK2 (301)**")
+            u301_prev = c_u1.number_input("301 Prev", min_value=0, value=int(p301_auto), key="301p")
+            u301_curr = c_u1.number_input("301 Curr", min_value=0, value=0, key="301c")
+            u301_units = u301_curr - u301_prev
             sub_readings_to_save.append({"flat": "301", "val": u301_curr})
             
-            p401 = get_prev_reading("401")
-            c_u2.write(f"**1RK2 (401)** (Prev: {p401})")
-            u401_curr = c_u2.number_input("401 Current", min_value=0, value=0, key="401c")
-            u401_units = u401_curr - p401
+            # 401 - Make Prev Editable
+            p401_auto = get_prev_reading("401")
+            c_u2.write("**1RK2 (401)**")
+            u401_prev = c_u2.number_input("401 Prev", min_value=0, value=int(p401_auto), key="401p")
+            u401_curr = c_u2.number_input("401 Curr", min_value=0, value=0, key="401c")
+            u401_units = u401_curr - u401_prev
             sub_readings_to_save.append({"flat": "401", "val": u401_curr})
             
             u302_units = mm_units - (u301_units + u401_units)
             if u302_units < 0: u302_units = 0
             
-            p302 = get_prev_reading("302")
-            u302_curr = p302 + u302_units
+            p302_auto = get_prev_reading("302")
+            u302_curr = p302_auto + u302_units
             sub_readings_to_save.append({"flat": "302", "val": u302_curr})
             
             st.success(f"🏠 **302 Units (Auto):** {u302_units}")
@@ -263,9 +274,9 @@ def admin_dashboard(user_details):
         except: pass
         
         if not rates_data:
-            st.warning("⚠️ No Main Meter data found for this date.")
+            st.warning("⚠️ No Main Meter data found for this date. Please save Main Meters first in Tab 2.")
         else:
-            st.success(f"Rates Loaded! Ground: {rates_data.get('Ground Meter',0):.2f} | Middle: {rates_data.get('Middle Meter',0):.2f}")
+            st.success(f"Rates Loaded! Ground: {rates_data.get('Ground Meter',0):.2f} | Middle: {rates_data.get('Middle Meter',0):.2f} | Upper: {rates_data.get('Upper Meter',0):.2f}")
 
             all_tenants = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
             total_people = sum([(t.get('num_people') or 0) for t in all_tenants.data]) if all_tenants.data else 1
@@ -276,7 +287,6 @@ def admin_dashboard(user_details):
 
             st.markdown("### 📋 Tenant Bill Preview")
             
-            # Header
             h1, h2, h3, h4, h5, h6, h7 = st.columns([2, 1, 1, 1, 1, 1, 2])
             h1.write("**Tenant (Flat)**")
             h2.write("**Prev**")
@@ -291,7 +301,6 @@ def admin_dashboard(user_details):
             if all_tenants.data:
                 for t in all_tenants.data:
                     with st.expander(f"🧾 {t.get('full_name')} ({t.get('flat_number')}) - Click to View Calculation"):
-                        
                         flat = t.get('flat_number', 'Unknown')
                         name = t.get('full_name', 'Unknown')
                         
@@ -319,16 +328,15 @@ def admin_dashboard(user_details):
                         
                         total_amt = math.ceil(elec_cost + water_cost)
 
-                        # --- DETAILED CALCULATION DISPLAY ---
                         col_d1, col_d2 = st.columns(2)
                         with col_d1:
                             st.write(f"**⚡ Electricity**")
-                            st.write(f"`{elec_units} Units` × `₹{rate:.2f}` = **₹{elec_cost:.2f}**")
+                            st.write(f"`{elec_units} Units` × `₹{rate:.4f}` = **₹{elec_cost:.2f}**")
                             st.caption(f"({t_curr} Curr - {t_prev} Prev)")
 
                         with col_d2:
                             st.write(f"**💧 Water Share**")
-                            st.write(f"`{water_share_units:.2f} Units` × `₹{water_rate:.2f}` = **₹{water_cost:.2f}**")
+                            st.write(f"`{water_share_units:.2f} Units` × `₹{water_rate:.4f}` = **₹{water_cost:.2f}**")
                             st.caption(f"({people} People × {units_per_person:.2f} Units/Head)")
                             
                         st.divider()
