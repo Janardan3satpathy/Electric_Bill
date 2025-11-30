@@ -77,9 +77,12 @@ def logout():
 # --- 3. HELPER FUNCTIONS ---
 def get_prev_reading(flat_number):
     try:
+        # Fetch the most recent reading for this flat
         res = conn.table("sub_meter_readings").select("reading_value").eq("flat_number", flat_number).order("reading_date", desc=True).limit(1).execute()
-        if res.data: return res.data[0]['reading_value']
-    except: pass
+        if res.data:
+            return res.data[0]['reading_value']
+    except:
+        pass
     return 0
 
 def get_meter_rate_for_flat(flat_number, rates_data):
@@ -132,16 +135,17 @@ def admin_dashboard(user_details):
         meter_type = col_sel1.radio("Select Floor:", ["Ground Meter", "Middle Meter", "Upper Meter"], horizontal=True)
         bill_date = col_sel2.date_input("Bill Date", value=date.today())
 
+        # Auto-fetch Main Meter Previous Reading
         main_prev = 0
         try:
-            last_meter = conn.table("main_meters").select("current_reading").eq("meter_name", meter_type).order("created_at", desc=True).limit(1).execute()
+            last_meter = conn.table("main_meters").select("current_reading").eq("meter_name", meter_type).neq("bill_month", str(bill_date)).order("created_at", desc=True).limit(1).execute()
             if last_meter.data: main_prev = last_meter.data[0]['current_reading']
         except: pass
 
         st.markdown(f"### 1. {meter_type}")
         col_m1, col_m2, col_m3 = st.columns(3)
         mm_prev = col_m1.number_input("Main Prev", min_value=0, value=int(main_prev or 0))
-        mm_curr = col_m2.number_input("Main Curr", min_value=0, value=0)
+        mm_curr = col_m2.number_input("Main Curr", min_value=0, value=0) # Default 0 as requested
         mm_bill = col_m3.number_input("Total Bill (₹)", min_value=0.0)
         
         mm_units = mm_curr - mm_prev
@@ -157,7 +161,6 @@ def admin_dashboard(user_details):
             st.markdown("### 2. Sub-Meters (Editable)")
             c_g1, c_g2 = st.columns(2)
             
-            # 101 - Make Prev Editable
             p101_auto = get_prev_reading("101")
             c_g1.write("**G2BHK (101)**")
             g1_prev = c_g1.number_input("101 Prev", min_value=0, value=int(p101_auto), key="101p")
@@ -165,7 +168,6 @@ def admin_dashboard(user_details):
             g1_units = g1_curr - g1_prev
             sub_readings_to_save.append({"flat": "101", "val": g1_curr})
             
-            # 102 - Make Prev Editable
             p102_auto = get_prev_reading("102")
             c_g2.write("**G1RK (102)**")
             g2_prev = c_g2.number_input("102 Prev", min_value=0, value=int(p102_auto), key="102p")
@@ -176,13 +178,12 @@ def admin_dashboard(user_details):
             water_units = mm_units - (g1_units + g2_units)
             if water_units < 0: water_units = 0
             water_cost = water_units * mm_rate
-            st.success(f"💧 Water Units: {water_units}")
+            st.success(f"💧 Water: {water_units} Units (₹{water_cost:.2f})")
 
         elif meter_type == "Middle Meter":
             st.markdown("### 2. Sub-Meters (Editable)")
             c_m1, c_m2 = st.columns(2)
             
-            # 201 - Make Prev Editable
             p201_auto = get_prev_reading("201")
             c_m1.write("**3BHK1 (201)**")
             m201_prev = c_m1.number_input("201 Prev", min_value=0, value=int(p201_auto), key="201p")
@@ -193,7 +194,6 @@ def admin_dashboard(user_details):
             m202_units = mm_units - m201_units
             if m202_units < 0: m202_units = 0
             
-            # Virtual Reading for 202
             p202_auto = get_prev_reading("202")
             m202_curr = p202_auto + m202_units
             sub_readings_to_save.append({"flat": "202", "val": m202_curr})
@@ -204,7 +204,6 @@ def admin_dashboard(user_details):
             st.markdown("### 2. Sub-Meters (Editable)")
             c_u1, c_u2 = st.columns(2)
             
-            # 301 - Make Prev Editable
             p301_auto = get_prev_reading("301")
             c_u1.write("**3BHK2 (301)**")
             u301_prev = c_u1.number_input("301 Prev", min_value=0, value=int(p301_auto), key="301p")
@@ -212,7 +211,6 @@ def admin_dashboard(user_details):
             u301_units = u301_curr - u301_prev
             sub_readings_to_save.append({"flat": "301", "val": u301_curr})
             
-            # 401 - Make Prev Editable
             p401_auto = get_prev_reading("401")
             c_u2.write("**1RK2 (401)**")
             u401_prev = c_u2.number_input("401 Prev", min_value=0, value=int(p401_auto), key="401p")
@@ -231,7 +229,8 @@ def admin_dashboard(user_details):
 
         if st.button(f"Save {meter_type} & Sub-Meters"):
             try:
-                conn.table("main_meters").insert({
+                # 1. Upsert Main Meter
+                conn.table("main_meters").upsert({
                     "meter_name": meter_type,
                     "bill_month": str(bill_date),
                     "previous_reading": mm_prev,
@@ -241,16 +240,18 @@ def admin_dashboard(user_details):
                     "calculated_rate": mm_rate,
                     "water_units": water_units,
                     "water_cost": water_cost
-                }).execute()
+                }, on_conflict="meter_name, bill_month").execute()
                 
+                # 2. Upsert Sub Meters
                 for item in sub_readings_to_save:
-                    conn.table("sub_meter_readings").insert({
+                    conn.table("sub_meter_readings").upsert({
                         "flat_number": item['flat'],
                         "reading_date": str(bill_date),
                         "reading_value": item['val']
-                    }).execute()
+                    }, on_conflict="flat_number, reading_date").execute()
                     
-                st.success("✅ Saved Main Meter and Updated Sub-Meters!")
+                st.success("✅ Saved Main Meter!")
+                st.write("✅ Saved Sub-Meters:", [s['flat'] for s in sub_readings_to_save]) # Confirmation
             except Exception as e:
                 st.error(f"❌ Error: {e}")
 
@@ -274,9 +275,9 @@ def admin_dashboard(user_details):
         except: pass
         
         if not rates_data:
-            st.warning("⚠️ No Main Meter data found for this date. Please save Main Meters first in Tab 2.")
+            st.warning("⚠️ No Main Meter data found for this date. Save Main Meters first.")
         else:
-            st.success(f"Rates Loaded! Ground: {rates_data.get('Ground Meter',0):.2f} | Middle: {rates_data.get('Middle Meter',0):.2f} | Upper: {rates_data.get('Upper Meter',0):.2f}")
+            st.success(f"Rates: Ground {rates_data.get('Ground Meter',0):.2f} | Middle {rates_data.get('Middle Meter',0):.2f} | Upper {rates_data.get('Upper Meter',0):.2f}")
 
             all_tenants = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
             total_people = sum([(t.get('num_people') or 0) for t in all_tenants.data]) if all_tenants.data else 1
@@ -352,23 +353,23 @@ def admin_dashboard(user_details):
                         
                         if t_curr > 0:
                             bill_batch.append(bill_obj)
-                            if st.button(f"Generate Bill for {name}", key=f"btn_{t['id']}"):
-                                conn.table("bills").insert(bill_obj).execute()
-                                st.success(f"Generated for {name}!")
+                            if st.button(f"Update/Gen Bill for {name}", key=f"btn_{t['id']}"):
+                                conn.table("bills").upsert(bill_obj, on_conflict="user_id, bill_month").execute()
+                                st.success(f"Bill Updated for {name}!")
                         else:
-                            st.error("Missing current reading. Check 'Main Meters' tab.")
+                            st.error("Missing reading.")
 
             st.divider()
-            if st.button("🚀 GENERATE ALL BILLS (Batch)", type="primary"):
+            if st.button("🚀 UPDATE/GENERATE ALL BILLS (Batch)", type="primary"):
                 if bill_batch:
                     try:
-                        conn.table("bills").insert(bill_batch).execute()
+                        conn.table("bills").upsert(bill_batch, on_conflict="user_id, bill_month").execute()
                         st.balloons()
-                        st.success(f"✅ Successfully generated {len(bill_batch)} bills!")
+                        st.success(f"✅ Successfully processed {len(bill_batch)} bills!")
                     except Exception as e:
                         st.error(f"Batch failed: {e}")
                 else:
-                    st.warning("No valid readings found to generate bills.")
+                    st.warning("No valid readings found.")
 
     # --- TAB 4: RECORDS ---
     with tab4:
