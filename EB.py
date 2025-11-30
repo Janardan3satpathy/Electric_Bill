@@ -9,7 +9,7 @@ import math
 st.set_page_config(page_title="S. Vihar Electricity Manager", page_icon="⚡")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. AUTHENTICATION & HELPER FUNCTIONS ---
+# --- 2. AUTHENTICATION ---
 
 def generate_captcha():
     if 'captcha_num1' not in st.session_state:
@@ -18,7 +18,6 @@ def generate_captcha():
     return st.session_state.captcha_num1, st.session_state.captcha_num2
 
 def ensure_profile_exists(user_id, email):
-    """Ensures the user has a profile row in the database."""
     try:
         resp = conn.table("profiles").select("*").eq("id", user_id).execute()
         if not resp.data:
@@ -84,8 +83,7 @@ def admin_dashboard(user_details):
 
     # --- TAB 1: MANAGE TENANT DETAILS ---
     with tab1:
-        st.subheader("Update Family Size (For Water Calc)")
-        
+        st.subheader("Update Family Size")
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").order("full_name").execute()
         if users_resp.data:
             df_users = pd.DataFrame(users_resp.data)
@@ -97,113 +95,114 @@ def admin_dashboard(user_details):
             sel_u_name = st.selectbox("Select Tenant to Update", list(user_opts.keys()))
             sel_u = user_opts[sel_u_name]
             
-            # Using columns for instant update
-            col_up1, col_up2 = st.columns(2)
-            new_count = col_up1.number_input(f"People in {sel_u_name}'s Flat", value=sel_u.get('num_people', 0) or 0, min_value=0)
+            c_up1, c_up2 = st.columns(2)
+            new_count = c_up1.number_input(f"People in {sel_u_name}'s Flat", value=sel_u.get('num_people', 0) or 0, min_value=0)
             
-            if col_up2.button("Update Database"):
+            if c_up2.button("Update Database"):
                 try:
-                    res = conn.table("profiles").update({"num_people": new_count}).eq("id", sel_u['id']).execute()
-                    if res.data:
-                        st.success(f"✅ Updated {sel_u_name} to {new_count} people.")
-                        st.rerun()
-                    else:
-                        st.error("❌ Update failed. No rows changed.")
+                    conn.table("profiles").update({"num_people": new_count}).eq("id", sel_u['id']).execute()
+                    st.success(f"✅ Updated {sel_u_name} to {new_count} people!")
+                    st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Update failed: {e}")
 
-    # --- TAB 2: MAIN METERS CALCULATOR (REACTIVE UI) ---
+    # --- TAB 2: MAIN METERS CALCULATOR ---
     with tab2:
         st.subheader("Main Meter Readings")
         meter_type = st.radio("Select Floor:", ["Ground Meter", "Middle Meter", "Upper Meter"], horizontal=True)
         
-        # Auto-fetch previous reading
+        # Auto-fetch Main Meter Previous Reading Only
         try:
             last_meter_data = conn.table("main_meters").select("current_reading").eq("meter_name", meter_type).order("created_at", desc=True).limit(1).execute()
             default_prev = last_meter_data.data[0]['current_reading'] if last_meter_data.data else 0
         except:
             default_prev = 0
 
-        # --- LIVE INPUTS (No Form here so math updates instantly) ---
+        # --- LIVE INPUTS ---
+        st.markdown(f"### 1. {meter_type} (Main)")
         col_m1, col_m2, col_m3 = st.columns(3)
-        mm_prev = col_m1.number_input("Previous Reading", min_value=0, value=int(default_prev))
-        mm_curr = col_m2.number_input("Current Reading", min_value=0, value=int(default_prev))
-        mm_bill = col_m3.number_input("Total Bill Amount (₹)", min_value=0.0)
+        mm_prev = col_m1.number_input("Main Prev", min_value=0, value=int(default_prev))
+        mm_curr = col_m2.number_input("Main Curr", min_value=0, value=int(default_prev))
+        mm_bill = col_m3.number_input("Total Bill (₹)", min_value=0.0)
         
-        # --- INSTANT CALCULATIONS ---
+        # Live Math
         mm_units = mm_curr - mm_prev
         mm_rate = 0.0
         if mm_units > 0:
             mm_rate = mm_bill / mm_units
         
-        # Display Main Stats Immediately
-        st.markdown(f"**⚡ Units Consumed:** `{mm_units}`  |  **💰 Calculated Rate:** `₹{mm_rate:.4f}`")
+        st.info(f"**Main Consumption:** {mm_units} Units | **Rate:** ₹{mm_rate:.4f}")
         
         water_units = 0
         water_cost = 0.0
 
         # --- FLOOR SPECIFIC LOGIC ---
         if meter_type == "Ground Meter":
-            st.info("💧 **Water Logic:** Ground - (101 + 102) = Total Water Units")
+            st.markdown("### 2. Sub-Meters (Flats)")
             c_g1, c_g2 = st.columns(2)
             
-            # Submeter 101
-            st.write("**G2BHK (101)**")
-            g1_prev = c_g1.number_input("101 Previous", min_value=0, key="g1p")
-            g1_curr = c_g2.number_input("101 Current", min_value=0, key="g1c")
+            # Submeter 101 (Start at 0 to avoid bugs)
+            c_g1.write("**G2BHK (101)**")
+            g1_prev = c_g1.number_input("101 Prev", min_value=0, key="g1p")
+            g1_curr = c_g1.number_input("101 Curr", min_value=0, key="g1c")
             g1_units = g1_curr - g1_prev
             
             # Submeter 102
-            st.write("**G1RK (102)**")
-            g2_prev = c_g1.number_input("102 Previous", min_value=0, key="g2p")
-            g2_curr = c_g2.number_input("102 Current", min_value=0, key="g2c")
+            c_g2.write("**G1RK (102)**")
+            g2_prev = c_g2.number_input("102 Prev", min_value=0, key="g2p")
+            g2_curr = c_g2.number_input("102 Curr", min_value=0, key="g2c")
             g2_units = g2_curr - g2_prev
             
-            # Water Math
+            # Logic: Main - (101 + 102)
             flat_units = g1_units + g2_units
             water_units = mm_units - flat_units
             if water_units < 0: water_units = 0
             water_cost = water_units * mm_rate
             
+            st.divider()
+            st.markdown(f"**Math:** `{mm_units} (Main) - ({g1_units} + {g2_units}) = {water_units} (Water)`")
             st.success(f"💧 **Water Units:** {water_units}  (Cost: ₹{water_cost:.2f})")
 
         elif meter_type == "Middle Meter":
-            st.info("ℹ️ **Logic:** Middle - 201 = 202")
+            st.markdown("### 2. Sub-Meters")
             c_m1, c_m2 = st.columns(2)
             st.write("**3BHK1 (201)**")
             m201_prev = c_m1.number_input("201 Previous", min_value=0, key="m201p")
             m201_curr = c_m2.number_input("201 Current", min_value=0, key="m201c")
             
             m201_units = m201_curr - m201_prev
-            m202_units = mm_units - m201_units
+            m202_units = mm_units - m201_units # Remainder is 202
             if m202_units < 0: m202_units = 0
             
-            st.success(f"🏠 **201 Units:** {m201_units} | 🏠 **202 Units:** {m202_units} (Auto)")
+            st.divider()
+            st.markdown(f"**Math:** `{mm_units} (Main) - {m201_units} (201) = {m202_units} (202)`")
+            st.success(f"🏠 **202 Units (Auto):** {m202_units}")
 
         elif meter_type == "Upper Meter":
-            st.info("ℹ️ **Logic:** Upper - (301 + 401) = 302")
+            st.markdown("### 2. Sub-Meters")
             c_u1, c_u2 = st.columns(2)
             
-            st.write("**3BHK2 (301)**")
+            c_u1.write("**3BHK2 (301)**")
             u301_prev = c_u1.number_input("301 Prev", min_value=0, key="u3p")
-            u301_curr = c_u2.number_input("301 Curr", min_value=0, key="u3c")
+            u301_curr = c_u1.number_input("301 Curr", min_value=0, key="u3c")
             
-            st.write("**1RK2 (401)**")
-            u401_prev = c_u1.number_input("401 Prev", min_value=0, key="u4p")
+            c_u2.write("**1RK2 (401)**")
+            u401_prev = c_u2.number_input("401 Prev", min_value=0, key="u4p")
             u401_curr = c_u2.number_input("401 Curr", min_value=0, key="u4c")
             
             u_sub_total = (u301_curr - u301_prev) + (u401_curr - u401_prev)
             u302_units = mm_units - u_sub_total
             if u302_units < 0: u302_units = 0
             
+            st.divider()
+            st.markdown(f"**Math:** `{mm_units} (Main) - ({u301_curr-u301_prev} + {u401_curr-u401_prev}) = {u302_units} (302)`")
             st.success(f"🏠 **302 Units (Auto):** {u302_units}")
 
         # --- SAVE BUTTON ---
         st.divider()
-        if st.button(f"Save {meter_type} Data"):
+        if st.button(f"Save {meter_type} Reading"):
             try:
-                # Save Data
-                data = {
+                conn.table("main_meters").insert({
                     "meter_name": meter_type,
                     "bill_month": str(date.today()),
                     "previous_reading": mm_prev,
@@ -213,14 +212,8 @@ def admin_dashboard(user_details):
                     "calculated_rate": mm_rate,
                     "water_units": water_units,
                     "water_cost": water_cost
-                }
-                res = conn.table("main_meters").insert(data).execute()
-                
-                # Check confirmation
-                if res.data:
-                    st.success("✅ Saved successfully to Database!")
-                else:
-                    st.warning("⚠️ Data sent, but no confirmation received. Check 'Records' tab.")
+                }).execute()
+                st.success("✅ Saved successfully!")
             except Exception as e:
                 st.error(f"❌ Save Failed: {e}")
 
@@ -228,23 +221,27 @@ def admin_dashboard(user_details):
     with tab3:
         st.subheader("Generate Tenant Bill")
         
-        # 1. Fetch Latest Data
+        # 1. Fetch Latest Ground Meter Data
         gm_data = conn.table("main_meters").select("*").eq("meter_name", "Ground Meter").order("created_at", desc=True).limit(1).execute()
         
         gm_rate = 5.50
         total_water_units = 0
+        
         if gm_data.data:
             gm_entry = gm_data.data[0]
             gm_rate = gm_entry.get('calculated_rate') or 5.50
             total_water_units = gm_entry.get('water_units') or 0
         
-        # 2. Water Logic
+        # 2. Calculate Water Per Person
         all_tenants = conn.table("profiles").select("num_people").eq("role", "tenant").execute()
-        total_people = sum([(t.get('num_people') or 0) for t in all_tenants.data]) if all_tenants.data else 1
-        if total_people == 0: total_people = 1
-        units_per_person = total_water_units / total_people
+        total_people_count = 0
+        if all_tenants.data:
+            total_people_count = sum([(t.get('num_people') or 0) for t in all_tenants.data])
+            
+        if total_people_count == 0: total_people_count = 1
+        units_per_person = total_water_units / total_people_count
         
-        st.info(f"💧 Water Share: {units_per_person:.2f} Units per person (Rate: ₹{gm_rate:.2f})")
+        st.info(f"📊 **Water Calculation:** {total_water_units} Units ÷ {total_people_count} People = **{units_per_person:.2f} Units/Person**")
 
         # 3. Select Tenant
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").execute()
@@ -258,10 +255,10 @@ def admin_dashboard(user_details):
             last_bill = conn.table("bills").select("current_reading").eq("user_id", selected_user['id']).order("created_at", desc=True).limit(1).execute()
             t_prev_def = last_bill.data[0]['current_reading'] if last_bill.data else 0
             
-            # --- LIVE BILL CALCULATOR (No Form) ---
-            col_t1, col_t2 = st.columns(2)
-            t_prev = col_t1.number_input("Previous", min_value=0, value=int(t_prev_def))
-            t_curr = col_t2.number_input("Current", min_value=0, value=int(t_prev_def))
+            # --- LIVE BILL CALCULATOR ---
+            c_t1, c_t2 = st.columns(2)
+            t_prev = c_t1.number_input("Previous", min_value=0, value=int(t_prev_def))
+            t_curr = c_t2.number_input("Current", min_value=0, value=int(t_prev_def))
             t_rate = st.number_input("Rate (₹)", value=float(gm_rate), format="%.4f")
             
             # Calculations
@@ -270,15 +267,15 @@ def admin_dashboard(user_details):
             t_water_units = units_per_person * t_people
             
             t_elec_cost = t_elec_units * t_rate
-            t_water_cost = t_water_units * t_rate # Using Ground Meter Rate for Water
+            t_water_cost = t_water_units * t_rate
             
             t_total_raw = t_elec_cost + t_water_cost
             t_total_final = math.ceil(t_total_raw)
             
             st.markdown(f"""
-            ### Bill Preview for {selected_user['full_name']}
-            - **Electricity:** {t_elec_units} units × ₹{t_rate} = ₹{t_elec_cost:.2f}
-            - **Water Share:** {t_people} people × {units_per_person:.2f} units = {t_water_units:.2f} units (₹{t_water_cost:.2f})
+            #### 🧾 Bill Preview
+            - **Electricity:** {t_elec_units} units
+            - **Water Share:** {t_water_units:.2f} units ({t_people} people)
             - **Total Units:** {t_elec_units + t_water_units:.2f}
             - **Final Amount:** **₹{t_total_final}**
             """)
@@ -305,10 +302,7 @@ def admin_dashboard(user_details):
     # --- TAB 4: RECORDS ---
     with tab4:
         st.subheader("Records")
-        if st.button("Refresh Data"):
-            st.rerun()
-            
-        st.write("#### Recent Bills")
+        if st.button("Refresh"): st.rerun()
         res = conn.table("bills").select("*").order("created_at", desc=True).limit(10).execute()
         if res.data:
             st.dataframe(pd.DataFrame(res.data)[['customer_name', 'bill_month', 'total_amount', 'units_consumed', 'tenant_water_units']])
@@ -323,7 +317,7 @@ def tenant_dashboard(user_details):
         df = pd.DataFrame(res.data)
         latest = df.iloc[0]
         
-        # Safe values
+        # Combine Units
         w_units = latest.get('tenant_water_units') or 0
         e_units = latest.get('units_consumed') or 0
         combined_units = e_units + w_units
