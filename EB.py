@@ -76,6 +76,7 @@ def logout():
     st.rerun()
 
 def get_last_month_reading(flat_number, current_date):
+    """Fetches previous reading securely."""
     try:
         res = conn.table("sub_meter_readings").select("current_reading").eq("flat_number", flat_number).lt("bill_month", str(current_date)).order("bill_month", desc=True).limit(1).execute()
         if res.data:
@@ -96,7 +97,7 @@ def get_meter_rate_for_flat(flat_number, rates_data):
 def admin_dashboard(user_details):
     st.title(f"Property Manager 🏠")
     
-    # REORGANIZED TABS
+    # 6 TABS CONFIGURATION
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "💰 Dues & Payments", 
         "👥 Tenants & Flats", 
@@ -106,67 +107,105 @@ def admin_dashboard(user_details):
         "📉 Outstanding Summary"
     ])
 
-    # --- TAB 1: DUES & PAYMENTS ---
+    # --- TAB 1: DUES & PAYMENTS (Approvals + Manual) ---
     with tab1:
-        st.subheader("Actionable Dues (Mark as Paid)")
+        # A. APPROVAL QUEUE (Online Payments)
+        st.subheader("1. Payment Verification Queue (Online Claims)")
+        pending_approvals = conn.table("bills").select("*").eq("status", "Verifying").execute()
+        rent_approvals = conn.table("rent_records").select("*, profiles(full_name)").eq("status", "Verifying").execute()
+        
+        # Flatten rent data for display
+        rent_verify_data = []
+        if rent_approvals.data:
+            for r in rent_approvals.data:
+                r['customer_name'] = r['profiles']['full_name'] if r['profiles'] else "Unknown"
+                rent_verify_data.append(r)
+
+        if not pending_approvals.data and not rent_verify_data:
+            st.info("No online payment claims waiting for verification.")
+        else:
+            # Electricity Approvals
+            for bill in pending_approvals.data:
+                with st.expander(f"⚡ Verify Elec: {bill['customer_name']} - ₹{bill['total_amount']}"):
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    c1.write(f"Month: {bill['bill_month']}")
+                    if c2.button("Approve", key=f"app_elec_{bill['id']}"):
+                        conn.table("bills").update({"status": "Paid"}).eq("id", bill['id']).execute()
+                        st.success("Approved!")
+                        time.sleep(0.5)
+                        st.rerun()
+                    if c3.button("Reject", key=f"rej_elec_{bill['id']}"):
+                        conn.table("bills").update({"status": "Pending"}).eq("id", bill['id']).execute()
+                        st.error("Rejected.")
+                        time.sleep(0.5)
+                        st.rerun()
+
+            # Rent Approvals
+            for r in rent_verify_data:
+                with st.expander(f"🏠 Verify Rent: {r['customer_name']} - ₹{r['amount']}"):
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    c1.write(f"Month: {r['bill_month']}")
+                    if c2.button("Approve", key=f"app_rent_{r['id']}"):
+                        conn.table("rent_records").update({"status": "Paid"}).eq("id", r['id']).execute()
+                        st.success("Approved!")
+                        time.sleep(0.5)
+                        st.rerun()
+                    if c3.button("Reject", key=f"rej_rent_{r['id']}"):
+                        conn.table("rent_records").update({"status": "Pending"}).eq("id", r['id']).execute()
+                        st.error("Rejected.")
+                        time.sleep(0.5)
+                        st.rerun()
+
+        st.divider()
+
+        # B. MANUAL PAYMENTS (Cash)
+        st.subheader("2. Manual Payment Entry (Cash)")
         
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
         user_opts = {f"{u['full_name']} ({u.get('flat_number', '?')})": u for u in users_resp.data}
         
-        if not user_opts:
-            st.warning("No tenants found.")
-        else:
-            sel_label = st.selectbox("Select Tenant to Update Payment", list(user_opts.keys()))
+        if user_opts:
+            sel_label = st.selectbox("Select Tenant", list(user_opts.keys()))
             sel_u = user_opts[sel_label]
             uid = sel_u['id']
             
+            # Fetch Dues
             elec_res = conn.table("bills").select("*").eq("user_id", uid).neq("status", "Paid").execute()
-            pending_elec = pd.DataFrame(elec_res.data)
-            
             rent_res = conn.table("rent_records").select("*").eq("user_id", uid).neq("status", "Paid").execute()
-            pending_rent = pd.DataFrame(rent_res.data)
             
-            total_elec_due = pending_elec['total_amount'].sum() if not pending_elec.empty else 0
-            total_rent_due = pending_rent['amount'].sum() if not pending_rent.empty else 0
-            total_due = total_elec_due + total_rent_due
+            total_elec_due = sum(item['total_amount'] for item in elec_res.data)
+            total_rent_due = sum(item['amount'] for item in rent_res.data)
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total Outstanding Due", f"₹{total_due}", delta_color="inverse")
-            c2.metric("Rent Pending", f"₹{total_rent_due}")
-            c3.metric("Electricity Pending", f"₹{total_elec_due}")
+            c1.metric("Total Pending", f"₹{total_elec_due + total_rent_due}")
+            c2.metric("Rent", f"₹{total_rent_due}")
+            c3.metric("Electricity", f"₹{total_elec_due}")
             
-            st.divider()
-            
-            with st.expander("🔻 View Details & Update", expanded=True):
-                st.markdown("#### 🏠 Rent Dues")
-                if not pending_rent.empty:
-                    for idx, row in pending_rent.iterrows():
-                        rc1, rc2, rc3 = st.columns([3, 2, 2])
-                        rc1.write(f"Month: **{row['bill_month']}**")
-                        rc2.write(f"₹{row['amount']}")
-                        if rc3.button("Mark Rent Paid", key=f"rent_{row['id']}"):
-                            conn.table("rent_records").update({"status": "Paid"}).eq("id", row['id']).execute()
-                            st.toast(f"Rent for {row['bill_month']} cleared!")
-                            time.sleep(1)
+            with st.expander("🔻 Tick boxes to Mark as Paid (Cash)", expanded=True):
+                # Rent Checkboxes
+                if rent_res.data:
+                    st.markdown("**Rent Dues**")
+                    for r in rent_res.data:
+                        col_r1, col_r2 = st.columns([3, 1])
+                        col_r1.write(f"{r['bill_month']} (₹{r['amount']}) - {r['status']}")
+                        if col_r2.button("Mark Paid", key=f"pay_rent_{r['id']}"):
+                            conn.table("rent_records").update({"status": "Paid"}).eq("id", r['id']).execute()
+                            st.toast("Rent Paid!")
+                            time.sleep(0.5)
                             st.rerun()
-                else:
-                    st.success("No Rent Dues!")
                 
-                st.divider()
-                
-                st.markdown("#### ⚡ Electricity Dues")
-                if not pending_elec.empty:
-                    for idx, row in pending_elec.iterrows():
-                        ec1, ec2, ec3 = st.columns([3, 2, 2])
-                        ec1.write(f"Month: **{row['bill_month']}** ({row['status']})")
-                        ec2.write(f"₹{row['total_amount']}")
-                        if ec3.button("Mark Bill Paid", key=f"elec_{row['id']}"):
-                            conn.table("bills").update({"status": "Paid"}).eq("id", row['id']).execute()
-                            st.toast(f"Bill for {row['bill_month']} cleared!")
-                            time.sleep(1)
+                # Electricity Checkboxes
+                if elec_res.data:
+                    st.divider()
+                    st.markdown("**Electricity Dues**")
+                    for b in elec_res.data:
+                        col_e1, col_e2 = st.columns([3, 1])
+                        col_e1.write(f"{b['bill_month']} (₹{b['total_amount']}) - {b['status']}")
+                        if col_e2.button("Mark Paid", key=f"pay_elec_{b['id']}"):
+                            conn.table("bills").update({"status": "Paid"}).eq("id", b['id']).execute()
+                            st.toast("Bill Paid!")
+                            time.sleep(0.5)
                             st.rerun()
-                else:
-                    st.success("No Electricity Dues!")
 
     # --- TAB 2: MANAGE TENANT DETAILS ---
     with tab2:
@@ -233,6 +272,7 @@ def admin_dashboard(user_details):
         water_cost = 0.0
         sub_readings_to_save = [] 
 
+        # Floor Logic
         if meter_type == "Ground Meter":
             st.markdown("### 2. Sub-Meters")
             c_g1, c_g2 = st.columns(2)
@@ -311,34 +351,33 @@ def admin_dashboard(user_details):
             except Exception as e:
                 st.error(f"❌ Error: {e}")
 
-    # --- TAB 4: GENERATE BILLS (UPDATED WITH FINANCIAL SUMMARY) ---
+    # --- TAB 4: GENERATE BILLS ---
     with tab4:
         st.subheader("Generate Monthly Bills")
         col_gen1, col_gen2 = st.columns(2)
         gen_date = col_gen1.date_input("Bill Date for Generation", value=date.today())
         
-        # --- NEW: FINANCIAL SUMMARY ---
+        # --- FINANCIAL OVERVIEW ---
         st.markdown("### 📊 Financial Overview for Month")
         
-        # 1. Admin Paid (Main Meters)
         admin_paid = 0
         mm_res = conn.table("main_meters").select("total_bill_amount").eq("bill_month", str(gen_date)).execute()
         if mm_res.data:
             admin_paid = sum([m['total_bill_amount'] for m in mm_res.data])
             
-        # 2. Tenant Recovery (Generated Bills)
         tenant_recovery = 0
         bills_res = conn.table("bills").select("total_amount").eq("bill_month", str(gen_date)).execute()
         if bills_res.data:
             tenant_recovery = sum([b['total_amount'] for b in bills_res.data])
             
         f1, f2 = st.columns(2)
-        f1.metric("💸 Total Admin Payment (Input)", f"₹{admin_paid}")
-        f2.metric("💰 Total Tenant Bills (Recovery)", f"₹{tenant_recovery}")
+        f1.metric("💸 Total Admin Payment", f"₹{admin_paid}")
+        f2.metric("💰 Total Tenant Recovery", f"₹{tenant_recovery}")
         
         st.divider()
         col_A, col_B = st.columns(2)
         
+        # ELECTRICITY GENERATION
         with col_A:
             st.markdown("### ⚡ Electricity Generation")
             rates_data = {}
@@ -397,6 +436,7 @@ def admin_dashboard(user_details):
                     else:
                         st.error("No valid meter readings found.")
 
+        # RENT GENERATION
         with col_B:
             st.markdown("### 🏠 Rent Generation")
             rent_batch = []
@@ -419,7 +459,7 @@ def admin_dashboard(user_details):
                 else:
                     st.warning("No tenants with rent amount > 0 found.")
 
-    # --- TAB 5: RECORDS (SAFE MODE) ---
+    # --- TAB 5: RECORDS ---
     with tab5:
         st.subheader("Records")
         r_opt = st.radio("View:", ["Electricity Bills", "Rent Records"])
@@ -429,50 +469,40 @@ def admin_dashboard(user_details):
             res = conn.table("bills").select("*").order("created_at", desc=True).limit(20).execute()
             if res.data: st.dataframe(pd.DataFrame(res.data)[['customer_name', 'bill_month', 'total_amount', 'status']])
         else:
-            # Safe Fetch without Join
             rent_res = conn.table("rent_records").select("*").order("created_at", desc=True).limit(20).execute()
             if rent_res.data:
-                # Fetch profiles map
                 prof_res = conn.table("profiles").select("id, full_name").execute()
                 p_map = {p['id']: p['full_name'] for p in prof_res.data}
-                
                 data = []
                 for r in rent_res.data:
                     r['name'] = p_map.get(r['user_id'], 'Unknown')
                     data.append(r)
                 st.dataframe(pd.DataFrame(data)[['name', 'bill_month', 'amount', 'status']])
 
-    # --- TAB 6: OUTSTANDING SUMMARY (UPDATED WITH TOTAL ROW) ---
+    # --- TAB 6: OUTSTANDING SUMMARY ---
     with tab6:
         st.subheader("📉 Consolidated Outstanding Summary")
+        st.write("Overview of Total Dues per Tenant (Rent + Electricity)")
         
         summary_data = []
         
-        # 1. Fetch All Tenants
         all_tenants = conn.table("profiles").select("*").eq("role", "tenant").execute()
-        
-        # 2. Fetch All Pending Records (Efficient)
         all_pending_elec = conn.table("bills").select("*").neq("status", "Paid").execute()
         all_pending_rent = conn.table("rent_records").select("*").neq("status", "Paid").execute()
         
-        # Helper
         def get_user_total(uid, record_list, amount_key):
             return sum([r[amount_key] for r in record_list if r['user_id'] == uid])
 
         if all_tenants.data:
             for t in all_tenants.data:
                 uid = t['id']
-                name = t['full_name']
-                flat = t.get('flat_number', 'N/A')
-                
                 rent_pending = get_user_total(uid, all_pending_rent.data, 'amount')
                 elec_pending = get_user_total(uid, all_pending_elec.data, 'total_amount')
                 total = rent_pending + elec_pending
                 
-                # Show everyone, even if 0 due (for complete report)
                 summary_data.append({
-                    "Tenant Name": name,
-                    "Flat Number": flat,
+                    "Tenant Name": t['full_name'],
+                    "Flat Number": t.get('flat_number', 'N/A'),
                     "Rent Pending (₹)": rent_pending,
                     "Electricity Pending (₹)": elec_pending,
                     "Total Due (₹)": total
@@ -481,7 +511,7 @@ def admin_dashboard(user_details):
         if summary_data:
             df_summary = pd.DataFrame(summary_data)
             
-            # --- ADD TOTAL ROW ---
+            # TOTAL ROW
             total_row = pd.DataFrame({
                 "Tenant Name": ["TOTAL"],
                 "Flat Number": ["-"],
@@ -523,7 +553,16 @@ def tenant_dashboard(user_details):
             
             c1, c2 = st.columns([1, 2])
             c1.image(qr_api, caption=f"Scan to Pay ₹{total_due}")
-            c2.write("1. Scan QR\n2. Pay Amount\n3. Notify Admin")
+            c2.write("1. Scan QR\n2. Pay Amount\n3. Click 'I have Paid' below")
+            
+            if c2.button("✅ I have Paid (Cash/Online)"):
+                for b in elec_res.data:
+                    conn.table("bills").update({"status": "Verifying"}).eq("id", b['id']).execute()
+                for r in rent_res.data:
+                    conn.table("rent_records").update({"status": "Verifying"}).eq("id", r['id']).execute()
+                st.success("Sent for verification!")
+                time.sleep(1)
+                st.rerun()
     else:
         st.success("🎉 No Pending Dues!")
 
@@ -535,24 +574,14 @@ def tenant_dashboard(user_details):
         if elec_res.data:
             for b in elec_res.data:
                 st.write(f"**{b['bill_month']}**: ₹{b['total_amount']} ({b['status']})")
-                if b['status'] == 'Pending':
-                    if st.button(f"Mark Paid (Elec {b['bill_month']})", key=f"t_elec_{b['id']}"):
-                        conn.table("bills").update({"status": "Verifying"}).eq("id", b['id']).execute()
-                        st.rerun()
-        else:
-            st.info("No electricity dues.")
+        else: st.info("No electricity dues.")
             
     with c2:
         st.subheader("🏠 Rent Dues")
         if rent_res.data:
             for r in rent_res.data:
                 st.write(f"**{r['bill_month']}**: ₹{r['amount']} ({r['status']})")
-                if r['status'] == 'Pending':
-                    if st.button(f"Mark Paid (Rent {r['bill_month']})", key=f"t_rent_{r['id']}"):
-                        conn.table("rent_records").update({"status": "Verifying"}).eq("id", r['id']).execute()
-                        st.rerun()
-        else:
-            st.info("No rent dues.")
+        else: st.info("No rent dues.")
 
 # --- 6. MAIN ---
 def main():
