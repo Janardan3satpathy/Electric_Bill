@@ -235,4 +235,266 @@ def admin_dashboard(user_details):
             
             p102 = get_last_month_reading("102", bill_date)
             g2_prev = c_g2.number_input("102 Prev", value=int(p102), key="102p")
-            g2_curr = c_g2.number_input("1
+            g2_curr = c_g2.number_input("102 Curr", value=0, key="102c")
+            sub_readings_to_save.append({"flat": "102", "prev": g2_prev, "curr": g2_curr, "units": g2_curr - g2_prev})
+            
+            water_units = mm_units - ((g1_curr-g1_prev) + (g2_curr-g2_prev))
+            if water_units < 0: water_units = 0
+            water_cost = water_units * mm_rate
+
+        elif meter_type == "Middle Meter":
+            st.markdown("### 2. Sub-Meters")
+            c_m1, c_m2 = st.columns(2)
+            p201 = get_last_month_reading("201", bill_date)
+            m201_prev = c_m1.number_input("201 Prev", value=int(p201), key="201p")
+            m201_curr = c_m1.number_input("201 Curr", value=0, key="201c")
+            m201_units = m201_curr - m201_prev
+            sub_readings_to_save.append({"flat": "201", "prev": m201_prev, "curr": m201_curr, "units": m201_units})
+            
+            m202_units = mm_units - m201_units
+            if m202_units < 0: m202_units = 0
+            p202 = get_last_month_reading("202", bill_date)
+            sub_readings_to_save.append({"flat": "202", "prev": p202, "curr": p202 + m202_units, "units": m202_units})
+
+        elif meter_type == "Upper Meter":
+            st.markdown("### 2. Sub-Meters")
+            c_u1, c_u2 = st.columns(2)
+            p301 = get_last_month_reading("301", bill_date)
+            u301_prev = c_u1.number_input("301 Prev", value=int(p301), key="301p")
+            u301_curr = c_u1.number_input("301 Curr", value=0, key="301c")
+            u301_units = u301_curr - u301_prev
+            sub_readings_to_save.append({"flat": "301", "prev": u301_prev, "curr": u301_curr, "units": u301_units})
+            
+            p401 = get_last_month_reading("401", bill_date)
+            u401_prev = c_u2.number_input("401 Prev", value=int(p401), key="401p")
+            u401_curr = c_u2.number_input("401 Curr", value=0, key="401c")
+            u401_units = u401_curr - u401_prev
+            sub_readings_to_save.append({"flat": "401", "prev": u401_prev, "curr": u401_curr, "units": u401_units})
+            
+            u302_units = mm_units - (u301_units + u401_units)
+            if u302_units < 0: u302_units = 0
+            p302 = get_last_month_reading("302", bill_date)
+            sub_readings_to_save.append({"flat": "302", "prev": p302, "curr": p302 + u302_units, "units": u302_units})
+
+        if st.button(f"Save {meter_type} Readings"):
+            try:
+                conn.table("main_meters").upsert({
+                    "meter_name": meter_type,
+                    "bill_month": str(bill_date),
+                    "previous_reading": mm_prev,
+                    "current_reading": mm_curr,
+                    "units_consumed": mm_units,
+                    "total_bill_amount": mm_bill,
+                    "calculated_rate": mm_rate,
+                    "water_units": water_units,
+                    "water_cost": water_cost
+                }, on_conflict="meter_name, bill_month").execute()
+                
+                for item in sub_readings_to_save:
+                    conn.table("sub_meter_readings").upsert({
+                        "flat_number": item['flat'],
+                        "bill_month": str(bill_date),
+                        "previous_reading": item['prev'],
+                        "current_reading": item['curr'],
+                        "units_consumed": item['units']
+                    }, on_conflict="flat_number, bill_month").execute()
+                    
+                st.success(f"✅ Saved Readings!")
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+
+    # --- TAB 4: GENERATE BILLS (SPLIT INTO COLUMNS) ---
+    with tab4:
+        st.subheader("Generate Monthly Bills")
+        
+        col_gen1, col_gen2 = st.columns(2)
+        gen_date = col_gen1.date_input("Bill Date for Generation", value=date.today())
+        
+        st.divider()
+        
+        # --- SPLIT INTERFACE ---
+        col_A, col_B = st.columns(2)
+        
+        # === COLUMN A: ELECTRICITY ===
+        with col_A:
+            st.markdown("### ⚡ Electricity Generation")
+            
+            rates_data = {}
+            water_stats = {"units": 0, "rate": 0}
+            try:
+                mm_res = conn.table("main_meters").select("*").eq("bill_month", str(gen_date)).execute()
+                for m in mm_res.data:
+                    rates_data[m['meter_name']] = m['calculated_rate']
+                    if m['meter_name'] == "Ground Meter":
+                        water_stats["units"] = m.get('water_units', 0)
+                        water_stats["rate"] = m.get('calculated_rate', 0)
+            except: pass
+
+            if not rates_data:
+                st.warning("⚠️ Meters not saved for this date.")
+            else:
+                total_people = sum([(t.get('num_people') or 0) for t in users_resp.data]) if users_resp.data else 1
+                if total_people == 0: total_people = 1
+                units_per_person = water_stats["units"] / total_people
+                
+                elec_batch = []
+                
+                if users_resp.data:
+                    for t in users_resp.data:
+                        flat = t.get('flat_number', 'Unknown')
+                        # Fetch reading
+                        t_prev = 0; t_curr = 0; elec_units = 0
+                        try:
+                            sub_res = conn.table("sub_meter_readings").select("*").eq("flat_number", flat).eq("bill_month", str(gen_date)).execute()
+                            if sub_res.data:
+                                row = sub_res.data[0]
+                                t_prev = row['previous_reading']
+                                t_curr = row['current_reading']
+                                elec_units = row['units_consumed']
+                        except: pass
+                        
+                        if t_curr > 0:
+                            rate = get_meter_rate_for_flat(flat, rates_data)
+                            elec_cost = elec_units * rate
+                            water_cost = (units_per_person * (t.get('num_people') or 0)) * rates_data.get('Ground Meter', 0)
+                            total_elec_amt = math.ceil(elec_cost + water_cost)
+                            
+                            elec_obj = {
+                                "user_id": t['id'], "customer_name": t['full_name'], "bill_month": str(gen_date),
+                                "previous_reading": t_prev, "current_reading": t_curr,
+                                "units_consumed": elec_units, "tenant_water_units": (units_per_person * (t.get('num_people') or 0)),
+                                "rate_per_unit": rate, "water_charge": water_cost,
+                                "total_amount": total_elec_amt, "status": "Pending"
+                            }
+                            elec_batch.append(elec_obj)
+                            st.caption(f"✅ {t['full_name']}: ₹{total_elec_amt}")
+                
+                if st.button("🚀 Generate Electricity Bills", type="primary"):
+                    if elec_batch:
+                        for obj in elec_batch:
+                            conn.table("bills").upsert(obj, on_conflict="user_id, bill_month").execute()
+                        st.success(f"Generated {len(elec_batch)} Electricity Bills!")
+                    else:
+                        st.error("No valid meter readings found.")
+
+        # === COLUMN B: RENT ===
+        with col_B:
+            st.markdown("### 🏠 Rent Generation")
+            st.info("Generates rent for all active tenants based on their profile.")
+            
+            rent_batch = []
+            if users_resp.data:
+                for t in users_resp.data:
+                    rent_amt = t.get('rent_amount') or 0
+                    if rent_amt > 0:
+                        rent_obj = {
+                            "user_id": t['id'], "bill_month": str(gen_date),
+                            "amount": rent_amt, "status": "Pending"
+                        }
+                        rent_batch.append(rent_obj)
+                        st.caption(f"✅ {t['full_name']}: ₹{rent_amt}")
+            
+            if st.button("🚀 Generate Rent Bills", type="primary"):
+                if rent_batch:
+                    for obj in rent_batch:
+                        conn.table("rent_records").upsert(obj, on_conflict="user_id, bill_month").execute()
+                    st.success(f"Generated {len(rent_batch)} Rent Records!")
+                else:
+                    st.warning("No tenants with rent amount > 0 found.")
+
+    # --- TAB 5: RECORDS (SAFE FETCH) ---
+    with tab5:
+        st.subheader("Records")
+        r_opt = st.radio("View:", ["Electricity Bills", "Rent Records"])
+        if st.button("Refresh"): st.rerun()
+        
+        if r_opt == "Electricity Bills":
+            res = conn.table("bills").select("*").order("created_at", desc=True).limit(20).execute()
+            if res.data: st.dataframe(pd.DataFrame(res.data)[['customer_name', 'bill_month', 'total_amount', 'status']])
+        else:
+            # Safe Fetch without Join
+            rent_res = conn.table("rent_records").select("*").order("created_at", desc=True).limit(20).execute()
+            if rent_res.data:
+                # Fetch profiles map
+                prof_res = conn.table("profiles").select("id, full_name").execute()
+                p_map = {p['id']: p['full_name'] for p in prof_res.data}
+                
+                data = []
+                for r in rent_res.data:
+                    r['name'] = p_map.get(r['user_id'], 'Unknown')
+                    data.append(r)
+                st.dataframe(pd.DataFrame(data)[['name', 'bill_month', 'amount', 'status']])
+
+# --- 5. TENANT DASHBOARD ---
+def tenant_dashboard(user_details):
+    st.title(f"Welcome, {user_details.get('full_name')} 👋")
+    
+    # 1. DUES OVERVIEW
+    elec_res = conn.table("bills").select("*").eq("user_id", user_details['id']).neq("status", "Paid").execute()
+    rent_res = conn.table("rent_records").select("*").eq("user_id", user_details['id']).neq("status", "Paid").execute()
+    
+    total_due = sum([b['total_amount'] for b in elec_res.data]) + sum([r['amount'] for r in rent_res.data])
+    
+    if total_due > 0:
+        st.error(f"⚠️ Total Outstanding Due: ₹{total_due}")
+        
+        with st.expander("💳 PAY DUES (UPI)", expanded=True):
+            upi_id = "s.vihar@upi"
+            upi_url = f"upi://pay?pa={upi_id}&pn=S_Vihar_Society&am={total_due}&cu=INR"
+            qr_api = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={upi_url}"
+            
+            c1, c2 = st.columns([1, 2])
+            c1.image(qr_api, caption=f"Scan to Pay ₹{total_due}")
+            c2.write("1. Scan QR\n2. Pay Amount\n3. Mark bills as paid below")
+    else:
+        st.success("🎉 No Pending Dues!")
+
+    st.divider()
+    
+    # 2. MARK AS PAID SECTION
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        st.subheader("⚡ Electricity Dues")
+        if elec_res.data:
+            for b in elec_res.data:
+                st.write(f"**{b['bill_month']}**: ₹{b['total_amount']} ({b['status']})")
+                if b['status'] == 'Pending':
+                    if st.button(f"Mark Paid (Elec {b['bill_month']})", key=f"t_elec_{b['id']}"):
+                        conn.table("bills").update({"status": "Verifying"}).eq("id", b['id']).execute()
+                        st.rerun()
+        else:
+            st.info("No electricity dues.")
+            
+    with c2:
+        st.subheader("🏠 Rent Dues")
+        if rent_res.data:
+            for r in rent_res.data:
+                st.write(f"**{r['bill_month']}**: ₹{r['amount']} ({r['status']})")
+                if r['status'] == 'Pending':
+                    if st.button(f"Mark Paid (Rent {r['bill_month']})", key=f"t_rent_{r['id']}"):
+                        conn.table("rent_records").update({"status": "Verifying"}).eq("id", r['id']).execute()
+                        st.rerun()
+        else:
+            st.info("No rent dues.")
+
+# --- 6. MAIN ---
+def main():
+    if 'user' not in st.session_state:
+        choice = st.sidebar.radio("Menu", ["Login", "Register"])
+        if choice == "Login": login()
+        else: register()
+    else:
+        user = st.session_state.user
+        profile = ensure_profile_exists(user.id, user.email)
+        if profile:
+            with st.sidebar:
+                st.write(f"👤 {profile.get('full_name')}")
+                st.button("Logout", on_click=logout)
+            if profile.get('role') == 'admin':
+                admin_dashboard(profile)
+            else:
+                tenant_dashboard(profile)
+
+if __name__ == "__main__":
+    main()
