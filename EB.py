@@ -497,7 +497,7 @@ def admin_dashboard(user_details):
                 else:
                     st.warning("No tenants with rent amount > 0 found.")
 
-    # --- TAB 5: RECORDS ---
+    # --- TAB 5: RECORDS (FIXED TXN ID DISPLAY) ---
     with tab5:
         st.subheader("Records")
         r_opt = st.radio("View:", ["Electricity Bills", "Rent Records"])
@@ -505,7 +505,12 @@ def admin_dashboard(user_details):
         
         if r_opt == "Electricity Bills":
             res = conn.table("bills").select("*").order("created_at", desc=True).limit(20).execute()
-            if res.data: st.dataframe(pd.DataFrame(res.data)[['customer_name', 'bill_month', 'total_amount', 'status', 'payment_mode', 'txn_id']])
+            if res.data: 
+                df = pd.DataFrame(res.data)
+                # Ensure cols exist
+                if 'txn_id' not in df.columns: df['txn_id'] = '-'
+                if 'payment_mode' not in df.columns: df['payment_mode'] = '-'
+                st.dataframe(df[['customer_name', 'bill_month', 'total_amount', 'status', 'payment_mode', 'txn_id']])
         else:
             rent_res = conn.table("rent_records").select("*").order("created_at", desc=True).limit(20).execute()
             if rent_res.data:
@@ -515,7 +520,12 @@ def admin_dashboard(user_details):
                 for r in rent_res.data:
                     r['name'] = p_map.get(r['user_id'], 'Unknown')
                     data.append(r)
-                st.dataframe(pd.DataFrame(data)[['name', 'bill_month', 'amount', 'status', 'payment_mode', 'txn_id']])
+                
+                df = pd.DataFrame(data)
+                if 'txn_id' not in df.columns: df['txn_id'] = '-'
+                if 'payment_mode' not in df.columns: df['payment_mode'] = '-'
+                
+                st.dataframe(df[['name', 'bill_month', 'amount', 'status', 'payment_mode', 'txn_id']])
 
     # --- TAB 6: OUTSTANDING SUMMARY ---
     with tab6:
