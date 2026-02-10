@@ -154,7 +154,7 @@ def admin_dashboard(user_details):
 
         st.divider()
 
-        # --- MANUAL PAYMENT ENTRY (UPDATED) ---
+        # --- MANUAL PAYMENT ENTRY (FIXED: NO FORM WRAPPER) ---
         st.subheader("2. Manual Payment Entry")
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
         user_opts = {f"{u['full_name']} ({u.get('flat_number', '?')})": u for u in users_resp.data}
@@ -177,56 +177,57 @@ def admin_dashboard(user_details):
             
             st.write("### 📝 Record Payment Details")
             
-            # RENT PAYMENTS
+            # Rent
             if rent_res.data:
                 st.markdown("**🏠 Rent Dues**")
                 for r in rent_res.data:
                     with st.expander(f"Pay Rent: {r['bill_month']} (₹{r['amount']})"):
-                        with st.form(key=f"form_rent_{r['id']}"):
-                            rc1, rc2 = st.columns(2)
-                            pay_mode = rc1.selectbox("Payment Mode", ["Cash", "Online (UPI/Bank)"], key=f"pm_rent_{r['id']}")
-                            pay_date = rc2.date_input("Date of Payment", value=date.today(), key=f"pd_rent_{r['id']}")
-                            
-                            txn_id = ""
-                            if pay_mode == "Online (UPI/Bank)":
-                                txn_id = st.text_input("Transaction ID / Ref No", key=f"tx_rent_{r['id']}")
-                            
-                            if st.form_submit_button("✅ Confirm Payment"):
-                                conn.table("rent_records").update({
-                                    "status": "Paid",
-                                    "payment_mode": pay_mode,
-                                    "payment_date": str(pay_date),
-                                    "txn_id": txn_id
-                                }).eq("id", r['id']).execute()
-                                st.success("Rent Marked as Paid!")
-                                time.sleep(1)
-                                st.rerun()
-
-            # ELECTRICITY PAYMENTS
+                        # REMOVED st.form HERE so interaction is dynamic
+                        rc1, rc2 = st.columns(2)
+                        pay_mode = rc1.selectbox("Payment Mode", ["Cash", "Online (UPI/Bank)"], key=f"pm_rent_{r['id']}")
+                        pay_date = rc2.date_input("Date of Payment", value=date.today(), key=f"pd_rent_{r['id']}")
+                        
+                        txn_id = ""
+                        # Now this IF works instantly because there is no form blocking it
+                        if pay_mode == "Online (UPI/Bank)":
+                            txn_id = st.text_input("Transaction ID / Ref No", key=f"tx_rent_{r['id']}")
+                        
+                        if st.button("✅ Confirm Payment", key=f"btn_rent_{r['id']}"):
+                            conn.table("rent_records").update({
+                                "status": "Paid",
+                                "payment_mode": pay_mode,
+                                "payment_date": str(pay_date),
+                                "txn_id": txn_id
+                            }).eq("id", r['id']).execute()
+                            st.success("Rent Marked as Paid!")
+                            time.sleep(1)
+                            st.rerun()
+            
+            # Electricity
             if elec_res.data:
                 st.divider()
                 st.markdown("**⚡ Electricity Dues**")
                 for b in elec_res.data:
                     with st.expander(f"Pay Bill: {b['bill_month']} (₹{b['total_amount']})"):
-                        with st.form(key=f"form_elec_{b['id']}"):
-                            ec1, ec2 = st.columns(2)
-                            pay_mode = ec1.selectbox("Payment Mode", ["Cash", "Online (UPI/Bank)"], key=f"pm_elec_{b['id']}")
-                            pay_date = ec2.date_input("Date of Payment", value=date.today(), key=f"pd_elec_{b['id']}")
-                            
-                            txn_id = ""
-                            if pay_mode == "Online (UPI/Bank)":
-                                txn_id = st.text_input("Transaction ID / Ref No", key=f"tx_elec_{b['id']}")
-                            
-                            if st.form_submit_button("✅ Confirm Payment"):
-                                conn.table("bills").update({
-                                    "status": "Paid",
-                                    "payment_mode": pay_mode,
-                                    "payment_date": str(pay_date),
-                                    "txn_id": txn_id
-                                }).eq("id", b['id']).execute()
-                                st.success("Bill Marked as Paid!")
-                                time.sleep(1)
-                                st.rerun()
+                        # REMOVED st.form HERE so interaction is dynamic
+                        ec1, ec2 = st.columns(2)
+                        pay_mode = ec1.selectbox("Payment Mode", ["Cash", "Online (UPI/Bank)"], key=f"pm_elec_{b['id']}")
+                        pay_date = ec2.date_input("Date of Payment", value=date.today(), key=f"pd_elec_{b['id']}")
+                        
+                        txn_id = ""
+                        if pay_mode == "Online (UPI/Bank)":
+                            txn_id = st.text_input("Transaction ID / Ref No", key=f"tx_elec_{b['id']}")
+                        
+                        if st.button("✅ Confirm Payment", key=f"btn_elec_{b['id']}"):
+                            conn.table("bills").update({
+                                "status": "Paid",
+                                "payment_mode": pay_mode,
+                                "payment_date": str(pay_date),
+                                "txn_id": txn_id
+                            }).eq("id", b['id']).execute()
+                            st.success("Bill Marked as Paid!")
+                            time.sleep(1)
+                            st.rerun()
 
     # --- TAB 2: MANAGE TENANT DETAILS ---
     with tab2:
@@ -292,7 +293,6 @@ def admin_dashboard(user_details):
         water_cost = 0.0
         sub_readings_to_save = [] 
 
-        # Floor Logic
         if meter_type == "Ground Meter":
             st.markdown("### 2. Sub-Meters")
             c_g1, c_g2 = st.columns(2)
@@ -309,7 +309,6 @@ def admin_dashboard(user_details):
             water_units = mm_units - ((g1_curr-g1_prev) + (g2_curr-g2_prev))
             if water_units < 0: water_units = 0
             water_cost = water_units * mm_rate
-            
             st.warning(f"💧 **Common/Water Usage:** {water_units} Units (Cost: ₹{water_cost:.2f})")
 
         elif meter_type == "Middle Meter":
@@ -453,16 +452,12 @@ def admin_dashboard(user_details):
                             }
                             elec_batch.append(elec_obj)
                             
-                            # --- DETAILED BREAKDOWN (UPDATED) ---
                             with st.expander(f"✅ {t['full_name']}: ₹{total_elec_amt}"):
                                 st.write("**1. Electricity**")
                                 st.caption(f"{elec_units} units × ₹{rate:.2f}/unit = **₹{elec_cost:.2f}**")
-                                
                                 st.write("**2. Water Share**")
-                                # THE UPDATED FORMULA FORMAT
                                 st.caption(f"({water_stats['units']} Units / {total_people} People) × {t_people} Tenant People = {tenant_water_share_units:.2f} Units")
                                 st.caption(f"{tenant_water_share_units:.2f} Units × ₹{water_rate:.2f}/Unit = **₹{water_cost:.2f}**")
-                                
                                 st.divider()
                                 st.write(f"**Grand Total:** ₹{elec_cost:.2f} + ₹{water_cost:.2f} = **₹{total_elec_amt}**")
                 
@@ -497,7 +492,7 @@ def admin_dashboard(user_details):
                 else:
                     st.warning("No tenants with rent amount > 0 found.")
 
-    # --- TAB 5: RECORDS (FIXED TXN ID DISPLAY) ---
+    # --- TAB 5: RECORDS (CRASH-PROOF) ---
     with tab5:
         st.subheader("Records")
         r_opt = st.radio("View:", ["Electricity Bills", "Rent Records"])
@@ -506,26 +501,27 @@ def admin_dashboard(user_details):
         if r_opt == "Electricity Bills":
             res = conn.table("bills").select("*").order("created_at", desc=True).limit(20).execute()
             if res.data: 
-                df = pd.DataFrame(res.data)
-                # Ensure cols exist
-                if 'txn_id' not in df.columns: df['txn_id'] = '-'
-                if 'payment_mode' not in df.columns: df['payment_mode'] = '-'
-                st.dataframe(df[['customer_name', 'bill_month', 'total_amount', 'status', 'payment_mode', 'txn_id']])
+                clean_data = []
+                for item in res.data:
+                    item['txn_id'] = item.get('txn_id') or '-'
+                    item['payment_mode'] = item.get('payment_mode') or '-'
+                    clean_data.append(item)
+                
+                st.dataframe(pd.DataFrame(clean_data)[['customer_name', 'bill_month', 'total_amount', 'status', 'payment_mode', 'txn_id']])
         else:
             rent_res = conn.table("rent_records").select("*").order("created_at", desc=True).limit(20).execute()
             if rent_res.data:
                 prof_res = conn.table("profiles").select("id, full_name").execute()
                 p_map = {p['id']: p['full_name'] for p in prof_res.data}
-                data = []
+                
+                clean_data = []
                 for r in rent_res.data:
                     r['name'] = p_map.get(r['user_id'], 'Unknown')
-                    data.append(r)
+                    r['txn_id'] = r.get('txn_id') or '-'
+                    r['payment_mode'] = r.get('payment_mode') or '-'
+                    clean_data.append(r)
                 
-                df = pd.DataFrame(data)
-                if 'txn_id' not in df.columns: df['txn_id'] = '-'
-                if 'payment_mode' not in df.columns: df['payment_mode'] = '-'
-                
-                st.dataframe(df[['name', 'bill_month', 'amount', 'status', 'payment_mode', 'txn_id']])
+                st.dataframe(pd.DataFrame(clean_data)[['name', 'bill_month', 'amount', 'status', 'payment_mode', 'txn_id']])
 
     # --- TAB 6: OUTSTANDING SUMMARY ---
     with tab6:
