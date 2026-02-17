@@ -162,7 +162,7 @@ def admin_dashboard(user_details):
 
         st.divider()
 
-        # --- MANUAL PAYMENT ENTRY (UPDATED) ---
+        # --- MANUAL PAYMENT ENTRY (UPDATED WITH MATH DISPLAY) ---
         st.subheader("2. Manual Payment Entry (Full or Partial)")
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
         user_opts = {f"{u['full_name']} ({u.get('flat_number', '?')})": u for u in users_resp.data}
@@ -202,22 +202,20 @@ def admin_dashboard(user_details):
                         
                         st.divider()
                         
-                        # --- NEW: PAYMENT TYPE DROPDOWN ---
                         pt1, pt2 = st.columns(2)
                         payment_type = pt1.selectbox(
                             "Payment Type", 
                             ["Full Payment", "Partial Payment"], 
-                            index=0, # Default to Full
+                            index=0, 
                             key=f"pt_rent_{r['id']}"
                         )
                         
-                        # Logic to set amount
                         final_paying_amount = 0
                         if payment_type == "Full Payment":
                             final_paying_amount = remaining
-                            pt2.info(f"✅ Paying Full Amount: ₹{final_paying_amount}")
+                            pt2.info(f"✅ Full Amount Selected: ₹{final_paying_amount}")
+                            st.success(f"**New Balance after payment:** ₹0") # Math for full
                         else:
-                            # Show input only if Partial is selected
                             final_paying_amount = pt2.number_input(
                                 "Enter Partial Amount (₹)", 
                                 min_value=1, 
@@ -225,13 +223,15 @@ def admin_dashboard(user_details):
                                 value=1, 
                                 key=f"amt_rent_{r['id']}"
                             )
+                            # --- THE NEW MATH DISPLAY ---
+                            balance_pending = remaining - final_paying_amount
+                            st.warning(f"🧮 **Calculation:** ₹{remaining} (Due) - ₹{final_paying_amount} (Paying) = **₹{balance_pending} (Remaining Pending)**")
 
                         txn_id = ""
                         if pay_mode == "Online (UPI/Bank)":
                             txn_id = st.text_input("Transaction ID / Ref No", key=f"tx_rent_{r['id']}")
                         
                         if st.button(f"✅ Record Payment (₹{final_paying_amount})", key=f"btn_rent_{r['id']}"):
-                            # Calculate New Totals
                             new_total_paid = already_paid + final_paying_amount
                             new_status = "Paid" if new_total_paid >= total_amount else "Partial"
                             
@@ -269,7 +269,6 @@ def admin_dashboard(user_details):
                         
                         st.divider()
                         
-                        # --- NEW: PAYMENT TYPE DROPDOWN ---
                         et1, et2 = st.columns(2)
                         payment_type = et1.selectbox(
                             "Payment Type", 
@@ -281,7 +280,8 @@ def admin_dashboard(user_details):
                         final_paying_amount = 0
                         if payment_type == "Full Payment":
                             final_paying_amount = remaining
-                            et2.info(f"✅ Paying Full Amount: ₹{final_paying_amount}")
+                            et2.info(f"✅ Full Amount Selected: ₹{final_paying_amount}")
+                            st.success(f"**New Balance after payment:** ₹0")
                         else:
                             final_paying_amount = et2.number_input(
                                 "Enter Partial Amount (₹)", 
@@ -290,6 +290,9 @@ def admin_dashboard(user_details):
                                 value=1, 
                                 key=f"amt_elec_{b['id']}"
                             )
+                            # --- THE NEW MATH DISPLAY ---
+                            balance_pending = remaining - final_paying_amount
+                            st.warning(f"🧮 **Calculation:** ₹{remaining} (Due) - ₹{final_paying_amount} (Paying) = **₹{balance_pending} (Remaining Pending)**")
 
                         txn_id = ""
                         if pay_mode == "Online (UPI/Bank)":
