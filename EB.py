@@ -30,21 +30,63 @@ def ensure_profile_exists(user_id, email):
     except:
         return None
 
+# --- NEW: TOP NAVIGATION BAR ---
+def render_top_nav(profile):
+    """Renders the top bar with Name on left and Logout on right."""
+    col_title, col_logout = st.columns([8, 1])
+    
+    with col_title:
+        role_badge = "👑 Admin" if profile.get('role') == 'admin' else "👤 Tenant"
+        st.title(f"Welcome, {profile.get('full_name')} {role_badge}")
+        
+    with col_logout:
+        st.write("") # Spacing to align button
+        st.write("") 
+        if st.button("Logout", type="secondary", use_container_width=True):
+            request_logout()
+
+    st.divider()
+
+    # --- LOGOUT CONFIRMATION DIALOG (In Main Area) ---
+    if st.session_state.get('confirm_logout'):
+        with st.container(border=True):
+            st.warning("⚠️ Are you sure you want to logout?")
+            c1, c2, c3 = st.columns([1, 1, 4])
+            if c1.button("✅ Yes, Logout"):
+                perform_logout()
+            if c2.button("❌ Cancel"):
+                cancel_logout()
+
+def request_logout():
+    st.session_state.confirm_logout = True
+
+def cancel_logout():
+    st.session_state.confirm_logout = False
+
+def perform_logout():
+    conn.auth.sign_out()
+    st.session_state.clear()
+    st.toast("Thank you for visiting the app! Visit again soon. 👋", icon="👋")
+    time.sleep(1) 
+    st.rerun()
+
 def login():
-    st.subheader("🔐 Login")
+    st.subheader("🔐 Access S. Vihar Manager")
     email = st.text_input("Email", key="login_email")
     password = st.text_input("Password", type="password", key="login_pass")
-    if st.button("Sign In"):
+    
+    if st.button("Sign In", type="primary", use_container_width=True):
         try:
             session = conn.auth.sign_in_with_password(dict(email=email, password=password))
             st.session_state.user = session.user
-            st.success("Logged in!")
+            st.success("Logged in successfully!")
+            time.sleep(0.5)
             st.rerun()
         except Exception as e:
             st.error(f"Login failed: {e}")
 
 def register():
-    st.subheader("📝 Register Tenant")
+    st.subheader("📝 New User Registration")
     with st.form("reg"):
         c1, c2 = st.columns(2)
         name = c1.text_input("Full Name")
@@ -56,7 +98,7 @@ def register():
         n1, n2 = generate_captcha()
         ans = st.number_input(f"{n1} + {n2} = ?", step=1)
         
-        if st.form_submit_button("Register"):
+        if st.form_submit_button("Register", use_container_width=True):
             if ans != (n1 + n2):
                 st.error("Wrong Captcha")
             else:
@@ -70,19 +112,11 @@ def register():
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-def logout():
-    conn.auth.sign_out()
-    st.session_state.clear()
-    st.rerun()
-
 def get_last_month_reading(flat_number, current_date):
-    """Fetches previous reading securely."""
     try:
         res = conn.table("sub_meter_readings").select("current_reading").eq("flat_number", flat_number).lt("bill_month", str(current_date)).order("bill_month", desc=True).limit(1).execute()
-        if res.data:
-            return res.data[0]['current_reading']
-    except:
-        pass
+        if res.data: return res.data[0]['current_reading']
+    except: pass
     return 0
 
 def get_meter_rate_for_flat(flat_number, rates_data):
@@ -95,7 +129,8 @@ def get_meter_rate_for_flat(flat_number, rates_data):
 # --- 3. ADMIN DASHBOARD ---
 
 def admin_dashboard(user_details):
-    st.title(f"Property Manager 🏠")
+    # Renders the Top Bar (Welcome + Logout)
+    render_top_nav(user_details)
     
     # 6 TABS CONFIGURATION
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -162,7 +197,7 @@ def admin_dashboard(user_details):
 
         st.divider()
 
-        # --- MANUAL PAYMENT ENTRY (UPDATED WITH MATH DISPLAY) ---
+        # --- MANUAL PAYMENT ENTRY ---
         st.subheader("2. Manual Payment Entry (Full or Partial)")
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
         user_opts = {f"{u['full_name']} ({u.get('flat_number', '?')})": u for u in users_resp.data}
@@ -213,8 +248,8 @@ def admin_dashboard(user_details):
                         final_paying_amount = 0
                         if payment_type == "Full Payment":
                             final_paying_amount = remaining
-                            pt2.info(f"✅ Full Amount Selected: ₹{final_paying_amount}")
-                            st.success(f"**New Balance after payment:** ₹0") # Math for full
+                            pt2.info(f"✅ Full Amount: ₹{final_paying_amount}")
+                            st.success("New Balance: ₹0")
                         else:
                             final_paying_amount = pt2.number_input(
                                 "Enter Partial Amount (₹)", 
@@ -223,9 +258,8 @@ def admin_dashboard(user_details):
                                 value=1, 
                                 key=f"amt_rent_{r['id']}"
                             )
-                            # --- THE NEW MATH DISPLAY ---
-                            balance_pending = remaining - final_paying_amount
-                            st.warning(f"🧮 **Calculation:** ₹{remaining} (Due) - ₹{final_paying_amount} (Paying) = **₹{balance_pending} (Remaining Pending)**")
+                            bal = remaining - final_paying_amount
+                            st.warning(f"🧮 **Calc:** ₹{remaining} - ₹{final_paying_amount} = **₹{bal} (Remaining)**")
 
                         txn_id = ""
                         if pay_mode == "Online (UPI/Bank)":
@@ -243,11 +277,8 @@ def admin_dashboard(user_details):
                                 "txn_id": txn_id
                             }).eq("id", r['id']).execute()
                             
-                            if new_status == "Paid":
-                                st.success("Rent Fully Paid! 🎉")
-                            else:
-                                st.info(f"Partial Payment Recorded. Remaining: ₹{total_amount - new_total_paid}")
-                                
+                            if new_status == "Paid": st.success("Rent Fully Paid! 🎉")
+                            else: st.info(f"Partial Payment Recorded.")
                             time.sleep(1)
                             st.rerun()
             
@@ -259,7 +290,6 @@ def admin_dashboard(user_details):
                     already_paid = b.get('amount_paid', 0) or 0
                     total_amount = b['total_amount']
                     remaining = total_amount - already_paid
-                    
                     status_label = f" (Paid: ₹{already_paid})" if already_paid > 0 else ""
 
                     with st.expander(f"Pay Bill: {b['bill_month']} | Due: ₹{remaining}{status_label}"):
@@ -280,8 +310,8 @@ def admin_dashboard(user_details):
                         final_paying_amount = 0
                         if payment_type == "Full Payment":
                             final_paying_amount = remaining
-                            et2.info(f"✅ Full Amount Selected: ₹{final_paying_amount}")
-                            st.success(f"**New Balance after payment:** ₹0")
+                            et2.info(f"✅ Full Amount: ₹{final_paying_amount}")
+                            st.success("New Balance: ₹0")
                         else:
                             final_paying_amount = et2.number_input(
                                 "Enter Partial Amount (₹)", 
@@ -290,9 +320,8 @@ def admin_dashboard(user_details):
                                 value=1, 
                                 key=f"amt_elec_{b['id']}"
                             )
-                            # --- THE NEW MATH DISPLAY ---
-                            balance_pending = remaining - final_paying_amount
-                            st.warning(f"🧮 **Calculation:** ₹{remaining} (Due) - ₹{final_paying_amount} (Paying) = **₹{balance_pending} (Remaining Pending)**")
+                            bal = remaining - final_paying_amount
+                            st.warning(f"🧮 **Calc:** ₹{remaining} - ₹{final_paying_amount} = **₹{bal} (Remaining)**")
 
                         txn_id = ""
                         if pay_mode == "Online (UPI/Bank)":
@@ -310,11 +339,8 @@ def admin_dashboard(user_details):
                                 "txn_id": txn_id
                             }).eq("id", b['id']).execute()
                             
-                            if new_status == "Paid":
-                                st.success("Bill Fully Paid! 🎉")
-                            else:
-                                st.info(f"Partial Payment Recorded. Remaining: ₹{total_amount - new_total_paid}")
-                            
+                            if new_status == "Paid": st.success("Bill Fully Paid! 🎉")
+                            else: st.info(f"Partial Payment Recorded.")
                             time.sleep(1)
                             st.rerun()
 
@@ -664,7 +690,7 @@ def admin_dashboard(user_details):
 
 # --- 5. TENANT DASHBOARD ---
 def tenant_dashboard(user_details):
-    st.title(f"Welcome, {user_details.get('full_name')} 👋")
+    render_top_nav(user_details)
     
     elec_res = conn.table("bills").select("*").eq("user_id", user_details['id']).neq("status", "Paid").execute()
     rent_res = conn.table("rent_records").select("*").eq("user_id", user_details['id']).neq("status", "Paid").execute()
@@ -718,16 +744,15 @@ def tenant_dashboard(user_details):
 # --- 6. MAIN ---
 def main():
     if 'user' not in st.session_state:
-        choice = st.sidebar.radio("Menu", ["Login", "Register"])
-        if choice == "Login": login()
-        else: register()
+        c1, c2, c3 = st.columns([1, 2, 1]) # Center content
+        with c2:
+            tab1, tab2 = st.tabs(["Login", "Register"])
+            with tab1: login()
+            with tab2: register()
     else:
         user = st.session_state.user
         profile = ensure_profile_exists(user.id, user.email)
         if profile:
-            with st.sidebar:
-                st.write(f"👤 {profile.get('full_name')}")
-                st.button("Logout", on_click=logout)
             if profile.get('role') == 'admin':
                 admin_dashboard(profile)
             else:
