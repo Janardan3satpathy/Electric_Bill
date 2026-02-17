@@ -30,6 +30,27 @@ def ensure_profile_exists(user_id, email):
     except:
         return None
 
+# --- NEW: LOGOUT DIALOG (MODAL) ---
+@st.dialog("⚠️ Confirm Logout")
+def show_logout_dialog():
+    st.write("Are you sure you want to end your session?")
+    st.write("The app will return to the login screen.")
+    
+    col1, col2 = st.columns(2)
+    
+    if col1.button("✅ Yes, Logout", use_container_width=True):
+        perform_logout()
+        
+    if col2.button("❌ No, Stay", use_container_width=True):
+        st.rerun() # Closes the dialog
+
+def perform_logout():
+    conn.auth.sign_out()
+    st.session_state.clear()
+    st.toast("Thank you for visiting the app! Visit again soon. 👋", icon="👋")
+    time.sleep(1.5) # Give time to read toast
+    st.rerun()
+
 def render_top_nav(profile):
     col_title, col_logout = st.columns([8, 1])
     with col_title:
@@ -39,32 +60,11 @@ def render_top_nav(profile):
     with col_logout:
         st.write("") 
         st.write("") 
+        # Clicking this now opens the MODAL dialog
         if st.button("Logout", type="secondary", use_container_width=True):
-            request_logout()
+            show_logout_dialog()
 
     st.divider()
-
-    if st.session_state.get('confirm_logout'):
-        with st.container(border=True):
-            st.warning("⚠️ Are you sure you want to logout?")
-            c1, c2, c3 = st.columns([1, 1, 4])
-            if c1.button("✅ Yes, Logout"):
-                perform_logout()
-            if c2.button("❌ Cancel"):
-                cancel_logout()
-
-def request_logout():
-    st.session_state.confirm_logout = True
-
-def cancel_logout():
-    st.session_state.confirm_logout = False
-
-def perform_logout():
-    conn.auth.sign_out()
-    st.session_state.clear()
-    st.toast("Thank you for visiting the app! Visit again soon. 👋", icon="👋")
-    time.sleep(1) 
-    st.rerun()
 
 def login():
     st.subheader("🔐 Access S. Vihar Manager")
@@ -484,17 +484,11 @@ def admin_dashboard(user_details):
                 st.warning("⚠️ Meters not saved for this date.")
             else:
                 water_rate = rates_data.get('Ground Meter', 0)
-                
-                # 1. Fetch all readings for month
                 sub_res_all = conn.table("sub_meter_readings").select("*").eq("bill_month", str(gen_date)).execute()
                 sub_map = {row['flat_number']: row for row in sub_res_all.data} if sub_res_all.data else {}
                 
-                # 2. Identify ACTIVE tenants (Elec > 0)
-                active_tenants = []
-                total_active_people = 0
-                
-                # We need a list of ALL tenants for display, but only calc based on ACTIVE ones
                 processed_tenants = []
+                total_active_people = 0
                 
                 if users_resp.data:
                     for t in users_resp.data:
@@ -507,7 +501,6 @@ def admin_dashboard(user_details):
                         t_curr = reading_data.get('current_reading', 0)
                         
                         is_active = elec_units > 0
-                        
                         if is_active:
                             total_active_people += t_people
                         
@@ -520,7 +513,7 @@ def admin_dashboard(user_details):
                             'is_active': is_active
                         })
                 
-                if total_active_people == 0: total_active_people = 1 # Div by zero guard
+                if total_active_people == 0: total_active_people = 1 
                 units_per_person = water_stats["units"] / total_active_people
                 
                 elec_batch = []
@@ -534,13 +527,11 @@ def admin_dashboard(user_details):
                     elec_cost = elec_units * rate
                     
                     if is_active:
-                        # ACTIVE LOGIC
                         t_people = item['t_people']
                         tenant_water_share_units = units_per_person * t_people
                         water_cost = tenant_water_share_units * water_rate
                         total_elec_amt = math.ceil(elec_cost + water_cost)
                         
-                        # Add to batch for saving
                         elec_obj = {
                             "user_id": t['id'], "customer_name": t['full_name'], "bill_month": str(gen_date),
                             "previous_reading": item['t_prev'], "current_reading": item['t_curr'],
@@ -550,7 +541,6 @@ def admin_dashboard(user_details):
                         }
                         elec_batch.append(elec_obj)
                         
-                        # DISPLAY
                         with st.expander(f"✅ {t['full_name']}: ₹{total_elec_amt}"):
                             st.write("**1. Electricity**")
                             st.caption(f"{elec_units} units × ₹{rate:.2f}/unit = **₹{elec_cost:.2f}**")
@@ -560,7 +550,6 @@ def admin_dashboard(user_details):
                             st.divider()
                             st.write(f"**Grand Total:** ₹{elec_cost:.2f} + ₹{water_cost:.2f} = **₹{total_elec_amt}**")
                     else:
-                        # INACTIVE LOGIC (Display Only - No Bill Generated usually)
                         with st.expander(f"⚠️ {t['full_name']} (Inactive)"):
                             st.info("Electricity consumption is 0. Water charge is skipped.")
                             st.caption(f"Electricity: 0 units | Water: ₹0")
