@@ -123,11 +123,15 @@ def admin_dashboard(user_details):
             st.info("No online payment claims waiting for verification.")
         else:
             for bill in pending_approvals.data:
-                with st.expander(f"⚡ Verify Elec: {bill['customer_name']} - ₹{bill['total_amount']}"):
+                paid_so_far = bill.get('amount_paid', 0) or 0
+                total = bill.get('total_amount', 0)
+                remaining = total - paid_so_far
+                
+                with st.expander(f"⚡ Verify Elec: {bill['customer_name']} - Claim for Remaining ₹{remaining}"):
                     c1, c2, c3 = st.columns([2, 1, 1])
                     c1.write(f"Month: {bill['bill_month']}")
-                    if c2.button("Approve", key=f"app_elec_{bill['id']}"):
-                        conn.table("bills").update({"status": "Paid"}).eq("id", bill['id']).execute()
+                    if c2.button("Approve Full", key=f"app_elec_{bill['id']}"):
+                        conn.table("bills").update({"status": "Paid", "amount_paid": total}).eq("id", bill['id']).execute()
                         st.success("Approved!")
                         time.sleep(0.5)
                         st.rerun()
@@ -138,11 +142,15 @@ def admin_dashboard(user_details):
                         st.rerun()
 
             for r in rent_verify_data:
-                with st.expander(f"🏠 Verify Rent: {r['customer_name']} - ₹{r['amount']}"):
+                paid_so_far = r.get('amount_paid', 0) or 0
+                total = r.get('amount', 0)
+                remaining = total - paid_so_far
+
+                with st.expander(f"🏠 Verify Rent: {r['customer_name']} - Claim for Remaining ₹{remaining}"):
                     c1, c2, c3 = st.columns([2, 1, 1])
                     c1.write(f"Month: {r['bill_month']}")
-                    if c2.button("Approve", key=f"app_rent_{r['id']}"):
-                        conn.table("rent_records").update({"status": "Paid"}).eq("id", r['id']).execute()
+                    if c2.button("Approve Full", key=f"app_rent_{r['id']}"):
+                        conn.table("rent_records").update({"status": "Paid", "amount_paid": total}).eq("id", r['id']).execute()
                         st.success("Approved!")
                         time.sleep(0.5)
                         st.rerun()
@@ -154,8 +162,8 @@ def admin_dashboard(user_details):
 
         st.divider()
 
-        # --- MANUAL PAYMENT ENTRY (FIXED: NO FORM WRAPPER) ---
-        st.subheader("2. Manual Payment Entry")
+        # --- MANUAL PAYMENT ENTRY (UPDATED) ---
+        st.subheader("2. Manual Payment Entry (Full or Partial)")
         users_resp = conn.table("profiles").select("*").eq("role", "tenant").order("flat_number").execute()
         user_opts = {f"{u['full_name']} ({u.get('flat_number', '?')})": u for u in users_resp.data}
         
@@ -167,65 +175,143 @@ def admin_dashboard(user_details):
             elec_res = conn.table("bills").select("*").eq("user_id", uid).neq("status", "Paid").execute()
             rent_res = conn.table("rent_records").select("*").eq("user_id", uid).neq("status", "Paid").execute()
             
-            total_elec_due = sum(item['total_amount'] for item in elec_res.data)
-            total_rent_due = sum(item['amount'] for item in rent_res.data)
+            total_elec_due = sum([(item['total_amount'] - (item.get('amount_paid', 0) or 0)) for item in elec_res.data])
+            total_rent_due = sum([(item['amount'] - (item.get('amount_paid', 0) or 0)) for item in rent_res.data])
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Total Pending", f"₹{total_elec_due + total_rent_due}")
-            c2.metric("Rent", f"₹{total_rent_due}")
-            c3.metric("Electricity", f"₹{total_elec_due}")
+            c2.metric("Rent Pending", f"₹{total_rent_due}")
+            c3.metric("Electricity Pending", f"₹{total_elec_due}")
             
             st.write("### 📝 Record Payment Details")
             
-            # Rent
+            # --- RENT PAYMENTS ---
             if rent_res.data:
                 st.markdown("**🏠 Rent Dues**")
                 for r in rent_res.data:
-                    with st.expander(f"Pay Rent: {r['bill_month']} (₹{r['amount']})"):
-                        # REMOVED st.form HERE so interaction is dynamic
+                    already_paid = r.get('amount_paid', 0) or 0
+                    total_amount = r['amount']
+                    remaining = total_amount - already_paid
+                    
+                    status_label = f" (Paid: ₹{already_paid})" if already_paid > 0 else ""
+                    
+                    with st.expander(f"Pay Rent: {r['bill_month']} | Due: ₹{remaining}{status_label}"):
                         rc1, rc2 = st.columns(2)
                         pay_mode = rc1.selectbox("Payment Mode", ["Cash", "Online (UPI/Bank)"], key=f"pm_rent_{r['id']}")
                         pay_date = rc2.date_input("Date of Payment", value=date.today(), key=f"pd_rent_{r['id']}")
                         
+                        st.divider()
+                        
+                        # --- NEW: PAYMENT TYPE DROPDOWN ---
+                        pt1, pt2 = st.columns(2)
+                        payment_type = pt1.selectbox(
+                            "Payment Type", 
+                            ["Full Payment", "Partial Payment"], 
+                            index=0, # Default to Full
+                            key=f"pt_rent_{r['id']}"
+                        )
+                        
+                        # Logic to set amount
+                        final_paying_amount = 0
+                        if payment_type == "Full Payment":
+                            final_paying_amount = remaining
+                            pt2.info(f"✅ Paying Full Amount: ₹{final_paying_amount}")
+                        else:
+                            # Show input only if Partial is selected
+                            final_paying_amount = pt2.number_input(
+                                "Enter Partial Amount (₹)", 
+                                min_value=1, 
+                                max_value=int(remaining), 
+                                value=1, 
+                                key=f"amt_rent_{r['id']}"
+                            )
+
                         txn_id = ""
-                        # Now this IF works instantly because there is no form blocking it
                         if pay_mode == "Online (UPI/Bank)":
                             txn_id = st.text_input("Transaction ID / Ref No", key=f"tx_rent_{r['id']}")
                         
-                        if st.button("✅ Confirm Payment", key=f"btn_rent_{r['id']}"):
+                        if st.button(f"✅ Record Payment (₹{final_paying_amount})", key=f"btn_rent_{r['id']}"):
+                            # Calculate New Totals
+                            new_total_paid = already_paid + final_paying_amount
+                            new_status = "Paid" if new_total_paid >= total_amount else "Partial"
+                            
                             conn.table("rent_records").update({
-                                "status": "Paid",
+                                "status": new_status,
+                                "amount_paid": new_total_paid,
                                 "payment_mode": pay_mode,
                                 "payment_date": str(pay_date),
                                 "txn_id": txn_id
                             }).eq("id", r['id']).execute()
-                            st.success("Rent Marked as Paid!")
+                            
+                            if new_status == "Paid":
+                                st.success("Rent Fully Paid! 🎉")
+                            else:
+                                st.info(f"Partial Payment Recorded. Remaining: ₹{total_amount - new_total_paid}")
+                                
                             time.sleep(1)
                             st.rerun()
             
-            # Electricity
+            # --- ELECTRICITY PAYMENTS ---
             if elec_res.data:
                 st.divider()
                 st.markdown("**⚡ Electricity Dues**")
                 for b in elec_res.data:
-                    with st.expander(f"Pay Bill: {b['bill_month']} (₹{b['total_amount']})"):
-                        # REMOVED st.form HERE so interaction is dynamic
+                    already_paid = b.get('amount_paid', 0) or 0
+                    total_amount = b['total_amount']
+                    remaining = total_amount - already_paid
+                    
+                    status_label = f" (Paid: ₹{already_paid})" if already_paid > 0 else ""
+
+                    with st.expander(f"Pay Bill: {b['bill_month']} | Due: ₹{remaining}{status_label}"):
                         ec1, ec2 = st.columns(2)
                         pay_mode = ec1.selectbox("Payment Mode", ["Cash", "Online (UPI/Bank)"], key=f"pm_elec_{b['id']}")
                         pay_date = ec2.date_input("Date of Payment", value=date.today(), key=f"pd_elec_{b['id']}")
                         
+                        st.divider()
+                        
+                        # --- NEW: PAYMENT TYPE DROPDOWN ---
+                        et1, et2 = st.columns(2)
+                        payment_type = et1.selectbox(
+                            "Payment Type", 
+                            ["Full Payment", "Partial Payment"], 
+                            index=0, 
+                            key=f"pt_elec_{b['id']}"
+                        )
+                        
+                        final_paying_amount = 0
+                        if payment_type == "Full Payment":
+                            final_paying_amount = remaining
+                            et2.info(f"✅ Paying Full Amount: ₹{final_paying_amount}")
+                        else:
+                            final_paying_amount = et2.number_input(
+                                "Enter Partial Amount (₹)", 
+                                min_value=1, 
+                                max_value=int(remaining), 
+                                value=1, 
+                                key=f"amt_elec_{b['id']}"
+                            )
+
                         txn_id = ""
                         if pay_mode == "Online (UPI/Bank)":
                             txn_id = st.text_input("Transaction ID / Ref No", key=f"tx_elec_{b['id']}")
                         
-                        if st.button("✅ Confirm Payment", key=f"btn_elec_{b['id']}"):
+                        if st.button(f"✅ Record Payment (₹{final_paying_amount})", key=f"btn_elec_{b['id']}"):
+                            new_total_paid = already_paid + final_paying_amount
+                            new_status = "Paid" if new_total_paid >= total_amount else "Partial"
+
                             conn.table("bills").update({
-                                "status": "Paid",
+                                "status": new_status,
+                                "amount_paid": new_total_paid,
                                 "payment_mode": pay_mode,
                                 "payment_date": str(pay_date),
                                 "txn_id": txn_id
                             }).eq("id", b['id']).execute()
-                            st.success("Bill Marked as Paid!")
+                            
+                            if new_status == "Paid":
+                                st.success("Bill Fully Paid! 🎉")
+                            else:
+                                st.info(f"Partial Payment Recorded. Remaining: ₹{total_amount - new_total_paid}")
+                            
                             time.sleep(1)
                             st.rerun()
 
@@ -507,7 +593,7 @@ def admin_dashboard(user_details):
                     item['payment_mode'] = item.get('payment_mode') or '-'
                     clean_data.append(item)
                 
-                st.dataframe(pd.DataFrame(clean_data)[['customer_name', 'bill_month', 'total_amount', 'status', 'payment_mode', 'txn_id']])
+                st.dataframe(pd.DataFrame(clean_data)[['customer_name', 'bill_month', 'total_amount', 'amount_paid', 'status', 'payment_mode', 'txn_id']])
         else:
             rent_res = conn.table("rent_records").select("*").order("created_at", desc=True).limit(20).execute()
             if rent_res.data:
@@ -521,7 +607,7 @@ def admin_dashboard(user_details):
                     r['payment_mode'] = r.get('payment_mode') or '-'
                     clean_data.append(r)
                 
-                st.dataframe(pd.DataFrame(clean_data)[['name', 'bill_month', 'amount', 'status', 'payment_mode', 'txn_id']])
+                st.dataframe(pd.DataFrame(clean_data)[['name', 'bill_month', 'amount', 'amount_paid', 'status', 'payment_mode', 'txn_id']])
 
     # --- TAB 6: OUTSTANDING SUMMARY ---
     with tab6:
@@ -533,7 +619,8 @@ def admin_dashboard(user_details):
         all_pending_rent = conn.table("rent_records").select("*").neq("status", "Paid").execute()
         
         def get_user_total(uid, record_list, amount_key):
-            return sum([r[amount_key] for r in record_list if r['user_id'] == uid])
+            # Sum up (Total Amount - Amount Paid So Far)
+            return sum([(r[amount_key] - (r.get('amount_paid', 0) or 0)) for r in record_list if r['user_id'] == uid])
 
         if all_tenants.data:
             for t in all_tenants.data:
@@ -579,7 +666,10 @@ def tenant_dashboard(user_details):
     elec_res = conn.table("bills").select("*").eq("user_id", user_details['id']).neq("status", "Paid").execute()
     rent_res = conn.table("rent_records").select("*").eq("user_id", user_details['id']).neq("status", "Paid").execute()
     
-    total_due = sum([b['total_amount'] for b in elec_res.data]) + sum([r['amount'] for r in rent_res.data])
+    # Calculate True Outstanding (Total - Amount Paid)
+    elec_due = sum([(b['total_amount'] - (b.get('amount_paid', 0) or 0)) for b in elec_res.data])
+    rent_due = sum([(r['amount'] - (r.get('amount_paid', 0) or 0)) for r in rent_res.data])
+    total_due = elec_due + rent_due
     
     if total_due > 0:
         st.error(f"⚠️ Total Outstanding Due: ₹{total_due}")
@@ -608,14 +698,18 @@ def tenant_dashboard(user_details):
         st.subheader("⚡ Electricity Dues")
         if elec_res.data:
             for b in elec_res.data:
-                st.write(f"**{b['bill_month']}**: ₹{b['total_amount']} ({b['status']})")
+                paid = b.get('amount_paid', 0) or 0
+                rem = b['total_amount'] - paid
+                st.write(f"**{b['bill_month']}**: Remaining ₹{rem} (Paid: ₹{paid}) - {b['status']}")
         else: st.info("No electricity dues.")
             
     with c2:
         st.subheader("🏠 Rent Dues")
         if rent_res.data:
             for r in rent_res.data:
-                st.write(f"**{r['bill_month']}**: ₹{r['amount']} ({r['status']})")
+                paid = r.get('amount_paid', 0) or 0
+                rem = r['amount'] - paid
+                st.write(f"**{r['bill_month']}**: Remaining ₹{rem} (Paid: ₹{paid}) - {r['status']}")
         else: st.info("No rent dues.")
 
 # --- 6. MAIN ---
