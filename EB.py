@@ -30,24 +30,20 @@ def ensure_profile_exists(user_id, email):
     except:
         return None
 
-# --- NEW: TOP NAVIGATION BAR ---
 def render_top_nav(profile):
-    """Renders the top bar with Name on left and Logout on right."""
     col_title, col_logout = st.columns([8, 1])
-    
     with col_title:
         role_badge = "👑 Admin" if profile.get('role') == 'admin' else "👤 Tenant"
         st.title(f"Welcome, {profile.get('full_name')} {role_badge}")
         
     with col_logout:
-        st.write("") # Spacing to align button
+        st.write("") 
         st.write("") 
         if st.button("Logout", type="secondary", use_container_width=True):
             request_logout()
 
     st.divider()
 
-    # --- LOGOUT CONFIRMATION DIALOG (In Main Area) ---
     if st.session_state.get('confirm_logout'):
         with st.container(border=True):
             st.warning("⚠️ Are you sure you want to logout?")
@@ -129,10 +125,8 @@ def get_meter_rate_for_flat(flat_number, rates_data):
 # --- 3. ADMIN DASHBOARD ---
 
 def admin_dashboard(user_details):
-    # Renders the Top Bar (Welcome + Logout)
     render_top_nav(user_details)
     
-    # 6 TABS CONFIGURATION
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "💰 Dues & Payments", 
         "👥 Tenants & Flats", 
@@ -238,12 +232,7 @@ def admin_dashboard(user_details):
                         st.divider()
                         
                         pt1, pt2 = st.columns(2)
-                        payment_type = pt1.selectbox(
-                            "Payment Type", 
-                            ["Full Payment", "Partial Payment"], 
-                            index=0, 
-                            key=f"pt_rent_{r['id']}"
-                        )
+                        payment_type = pt1.selectbox("Payment Type", ["Full Payment", "Partial Payment"], index=0, key=f"pt_rent_{r['id']}")
                         
                         final_paying_amount = 0
                         if payment_type == "Full Payment":
@@ -251,13 +240,7 @@ def admin_dashboard(user_details):
                             pt2.info(f"✅ Full Amount: ₹{final_paying_amount}")
                             st.success("New Balance: ₹0")
                         else:
-                            final_paying_amount = pt2.number_input(
-                                "Enter Partial Amount (₹)", 
-                                min_value=1, 
-                                max_value=int(remaining), 
-                                value=1, 
-                                key=f"amt_rent_{r['id']}"
-                            )
+                            final_paying_amount = pt2.number_input("Enter Partial Amount (₹)", min_value=1, max_value=int(remaining), value=1, key=f"amt_rent_{r['id']}")
                             bal = remaining - final_paying_amount
                             st.warning(f"🧮 **Calc:** ₹{remaining} - ₹{final_paying_amount} = **₹{bal} (Remaining)**")
 
@@ -268,15 +251,7 @@ def admin_dashboard(user_details):
                         if st.button(f"✅ Record Payment (₹{final_paying_amount})", key=f"btn_rent_{r['id']}"):
                             new_total_paid = already_paid + final_paying_amount
                             new_status = "Paid" if new_total_paid >= total_amount else "Partial"
-                            
-                            conn.table("rent_records").update({
-                                "status": new_status,
-                                "amount_paid": new_total_paid,
-                                "payment_mode": pay_mode,
-                                "payment_date": str(pay_date),
-                                "txn_id": txn_id
-                            }).eq("id", r['id']).execute()
-                            
+                            conn.table("rent_records").update({"status": new_status, "amount_paid": new_total_paid, "payment_mode": pay_mode, "payment_date": str(pay_date), "txn_id": txn_id}).eq("id", r['id']).execute()
                             if new_status == "Paid": st.success("Rent Fully Paid! 🎉")
                             else: st.info(f"Partial Payment Recorded.")
                             time.sleep(1)
@@ -300,12 +275,7 @@ def admin_dashboard(user_details):
                         st.divider()
                         
                         et1, et2 = st.columns(2)
-                        payment_type = et1.selectbox(
-                            "Payment Type", 
-                            ["Full Payment", "Partial Payment"], 
-                            index=0, 
-                            key=f"pt_elec_{b['id']}"
-                        )
+                        payment_type = et1.selectbox("Payment Type", ["Full Payment", "Partial Payment"], index=0, key=f"pt_elec_{b['id']}")
                         
                         final_paying_amount = 0
                         if payment_type == "Full Payment":
@@ -313,13 +283,7 @@ def admin_dashboard(user_details):
                             et2.info(f"✅ Full Amount: ₹{final_paying_amount}")
                             st.success("New Balance: ₹0")
                         else:
-                            final_paying_amount = et2.number_input(
-                                "Enter Partial Amount (₹)", 
-                                min_value=1, 
-                                max_value=int(remaining), 
-                                value=1, 
-                                key=f"amt_elec_{b['id']}"
-                            )
+                            final_paying_amount = et2.number_input("Enter Partial Amount (₹)", min_value=1, max_value=int(remaining), value=1, key=f"amt_elec_{b['id']}")
                             bal = remaining - final_paying_amount
                             st.warning(f"🧮 **Calc:** ₹{remaining} - ₹{final_paying_amount} = **₹{bal} (Remaining)**")
 
@@ -330,15 +294,7 @@ def admin_dashboard(user_details):
                         if st.button(f"✅ Record Payment (₹{final_paying_amount})", key=f"btn_elec_{b['id']}"):
                             new_total_paid = already_paid + final_paying_amount
                             new_status = "Paid" if new_total_paid >= total_amount else "Partial"
-
-                            conn.table("bills").update({
-                                "status": new_status,
-                                "amount_paid": new_total_paid,
-                                "payment_mode": pay_mode,
-                                "payment_date": str(pay_date),
-                                "txn_id": txn_id
-                            }).eq("id", b['id']).execute()
-                            
+                            conn.table("bills").update({"status": new_status, "amount_paid": new_total_paid, "payment_mode": pay_mode, "payment_date": str(pay_date), "txn_id": txn_id}).eq("id", b['id']).execute()
                             if new_status == "Paid": st.success("Bill Fully Paid! 🎉")
                             else: st.info(f"Partial Payment Recorded.")
                             time.sleep(1)
@@ -487,7 +443,7 @@ def admin_dashboard(user_details):
             except Exception as e:
                 st.error(f"❌ Error: {e}")
 
-    # --- TAB 4: GENERATE BILLS ---
+    # --- TAB 4: GENERATE BILLS (UPDATED LOGIC) ---
     with tab4:
         st.subheader("Generate Monthly Bills")
         col_gen1, col_gen2 = st.columns(2)
@@ -511,13 +467,12 @@ def admin_dashboard(user_details):
         st.divider()
         col_A, col_B = st.columns(2)
         
-        # ELECTRICITY GENERATION
+        # --- ELECTRICITY GENERATION (UPDATED ACTIVE TENANT LOGIC) ---
         with col_A:
             st.markdown("### ⚡ Electricity Generation")
             rates_data = {}
             water_stats = {"units": 0, "rate": 0}
             try:
-                mm_res = conn.table("main_meters").select("*").eq("bill_month", str(gen_date)).execute()
                 for m in mm_res.data:
                     rates_data[m['meter_name']] = m['calculated_rate']
                     if m['meter_name'] == "Ground Meter":
@@ -528,61 +483,93 @@ def admin_dashboard(user_details):
             if not rates_data:
                 st.warning("⚠️ Meters not saved for this date.")
             else:
-                total_people = sum([(t.get('num_people') or 0) for t in users_resp.data]) if users_resp.data else 1
-                if total_people == 0: total_people = 1
-                units_per_person = water_stats["units"] / total_people
                 water_rate = rates_data.get('Ground Meter', 0)
                 
-                elec_batch = []
+                # 1. Fetch all readings for month
+                sub_res_all = conn.table("sub_meter_readings").select("*").eq("bill_month", str(gen_date)).execute()
+                sub_map = {row['flat_number']: row for row in sub_res_all.data} if sub_res_all.data else {}
+                
+                # 2. Identify ACTIVE tenants (Elec > 0)
+                active_tenants = []
+                total_active_people = 0
+                
+                # We need a list of ALL tenants for display, but only calc based on ACTIVE ones
+                processed_tenants = []
+                
                 if users_resp.data:
                     for t in users_resp.data:
                         flat = t.get('flat_number', 'Unknown')
-                        t_prev = 0; t_curr = 0; elec_units = 0
-                        try:
-                            sub_res = conn.table("sub_meter_readings").select("*").eq("flat_number", flat).eq("bill_month", str(gen_date)).execute()
-                            if sub_res.data:
-                                row = sub_res.data[0]
-                                t_prev = row['previous_reading']
-                                t_curr = row['current_reading']
-                                elec_units = row['units_consumed']
-                        except: pass
+                        t_people = t.get('num_people') or 0
+                        reading_data = sub_map.get(flat, {})
                         
-                        if t_curr > 0:
-                            rate = get_meter_rate_for_flat(flat, rates_data)
-                            elec_cost = elec_units * rate
-                            
-                            # Water Calc
-                            t_people = t.get('num_people') or 0
-                            tenant_water_share_units = units_per_person * t_people
-                            water_cost = tenant_water_share_units * water_rate
-                            
-                            total_elec_amt = math.ceil(elec_cost + water_cost)
-                            
-                            elec_obj = {
-                                "user_id": t['id'], "customer_name": t['full_name'], "bill_month": str(gen_date),
-                                "previous_reading": t_prev, "current_reading": t_curr,
-                                "units_consumed": elec_units, "tenant_water_units": tenant_water_share_units,
-                                "rate_per_unit": rate, "water_charge": water_cost,
-                                "total_amount": total_elec_amt, "status": "Pending"
-                            }
-                            elec_batch.append(elec_obj)
-                            
-                            with st.expander(f"✅ {t['full_name']}: ₹{total_elec_amt}"):
-                                st.write("**1. Electricity**")
-                                st.caption(f"{elec_units} units × ₹{rate:.2f}/unit = **₹{elec_cost:.2f}**")
-                                st.write("**2. Water Share**")
-                                st.caption(f"({water_stats['units']} Units / {total_people} People) × {t_people} Tenant People = {tenant_water_share_units:.2f} Units")
-                                st.caption(f"{tenant_water_share_units:.2f} Units × ₹{water_rate:.2f}/Unit = **₹{water_cost:.2f}**")
-                                st.divider()
-                                st.write(f"**Grand Total:** ₹{elec_cost:.2f} + ₹{water_cost:.2f} = **₹{total_elec_amt}**")
+                        elec_units = reading_data.get('units_consumed', 0)
+                        t_prev = reading_data.get('previous_reading', 0)
+                        t_curr = reading_data.get('current_reading', 0)
+                        
+                        is_active = elec_units > 0
+                        
+                        if is_active:
+                            total_active_people += t_people
+                        
+                        processed_tenants.append({
+                            'tenant': t,
+                            'elec_units': elec_units,
+                            't_prev': t_prev,
+                            't_curr': t_curr,
+                            't_people': t_people,
+                            'is_active': is_active
+                        })
                 
-                if st.button("🚀 Generate Electricity Bills", type="primary"):
+                if total_active_people == 0: total_active_people = 1 # Div by zero guard
+                units_per_person = water_stats["units"] / total_active_people
+                
+                elec_batch = []
+                for item in processed_tenants:
+                    t = item['tenant']
+                    elec_units = item['elec_units']
+                    is_active = item['is_active']
+                    flat = t.get('flat_number', 'Unknown')
+                    
+                    rate = get_meter_rate_for_flat(flat, rates_data)
+                    elec_cost = elec_units * rate
+                    
+                    if is_active:
+                        # ACTIVE LOGIC
+                        t_people = item['t_people']
+                        tenant_water_share_units = units_per_person * t_people
+                        water_cost = tenant_water_share_units * water_rate
+                        total_elec_amt = math.ceil(elec_cost + water_cost)
+                        
+                        # Add to batch for saving
+                        elec_obj = {
+                            "user_id": t['id'], "customer_name": t['full_name'], "bill_month": str(gen_date),
+                            "previous_reading": item['t_prev'], "current_reading": item['t_curr'],
+                            "units_consumed": elec_units, "tenant_water_units": tenant_water_share_units,
+                            "rate_per_unit": rate, "water_charge": water_cost,
+                            "total_amount": total_elec_amt, "status": "Pending"
+                        }
+                        elec_batch.append(elec_obj)
+                        
+                        # DISPLAY
+                        with st.expander(f"✅ {t['full_name']}: ₹{total_elec_amt}"):
+                            st.write("**1. Electricity**")
+                            st.caption(f"{elec_units} units × ₹{rate:.2f}/unit = **₹{elec_cost:.2f}**")
+                            st.write("**2. Water Share**")
+                            st.caption(f"({water_stats['units']} Units / {total_active_people} Active People) × {t_people} Tenant People = {tenant_water_share_units:.2f} Units")
+                            st.caption(f"{tenant_water_share_units:.2f} Units × ₹{water_rate:.2f}/Unit = **₹{water_cost:.2f}**")
+                            st.divider()
+                            st.write(f"**Grand Total:** ₹{elec_cost:.2f} + ₹{water_cost:.2f} = **₹{total_elec_amt}**")
+                    else:
+                        # INACTIVE LOGIC (Display Only - No Bill Generated usually)
+                        with st.expander(f"⚠️ {t['full_name']} (Inactive)"):
+                            st.info("Electricity consumption is 0. Water charge is skipped.")
+                            st.caption(f"Electricity: 0 units | Water: ₹0")
+
+                if st.button("🚀 Generate Electricity Bills", type="primary", disabled=len(elec_batch)==0):
                     if elec_batch:
                         for obj in elec_batch:
                             conn.table("bills").upsert(obj, on_conflict="user_id, bill_month").execute()
                         st.success(f"Generated {len(elec_batch)} Electricity Bills!")
-                    else:
-                        st.error("No valid meter readings found.")
 
         # RENT GENERATION
         with col_B:
@@ -607,7 +594,7 @@ def admin_dashboard(user_details):
                 else:
                     st.warning("No tenants with rent amount > 0 found.")
 
-    # --- TAB 5: RECORDS (CRASH-PROOF) ---
+    # --- TAB 5: RECORDS ---
     with tab5:
         st.subheader("Records")
         r_opt = st.radio("View:", ["Electricity Bills", "Rent Records"])
@@ -621,21 +608,18 @@ def admin_dashboard(user_details):
                     item['txn_id'] = item.get('txn_id') or '-'
                     item['payment_mode'] = item.get('payment_mode') or '-'
                     clean_data.append(item)
-                
                 st.dataframe(pd.DataFrame(clean_data)[['customer_name', 'bill_month', 'total_amount', 'amount_paid', 'status', 'payment_mode', 'txn_id']])
         else:
             rent_res = conn.table("rent_records").select("*").order("created_at", desc=True).limit(20).execute()
             if rent_res.data:
                 prof_res = conn.table("profiles").select("id, full_name").execute()
                 p_map = {p['id']: p['full_name'] for p in prof_res.data}
-                
                 clean_data = []
                 for r in rent_res.data:
                     r['name'] = p_map.get(r['user_id'], 'Unknown')
                     r['txn_id'] = r.get('txn_id') or '-'
                     r['payment_mode'] = r.get('payment_mode') or '-'
                     clean_data.append(r)
-                
                 st.dataframe(pd.DataFrame(clean_data)[['name', 'bill_month', 'amount', 'amount_paid', 'status', 'payment_mode', 'txn_id']])
 
     # --- TAB 6: OUTSTANDING SUMMARY ---
@@ -648,7 +632,6 @@ def admin_dashboard(user_details):
         all_pending_rent = conn.table("rent_records").select("*").neq("status", "Paid").execute()
         
         def get_user_total(uid, record_list, amount_key):
-            # Sum up (Total Amount - Amount Paid So Far)
             return sum([(r[amount_key] - (r.get('amount_paid', 0) or 0)) for r in record_list if r['user_id'] == uid])
 
         if all_tenants.data:
@@ -695,7 +678,6 @@ def tenant_dashboard(user_details):
     elec_res = conn.table("bills").select("*").eq("user_id", user_details['id']).neq("status", "Paid").execute()
     rent_res = conn.table("rent_records").select("*").eq("user_id", user_details['id']).neq("status", "Paid").execute()
     
-    # Calculate True Outstanding (Total - Amount Paid)
     elec_due = sum([(b['total_amount'] - (b.get('amount_paid', 0) or 0)) for b in elec_res.data])
     rent_due = sum([(r['amount'] - (r.get('amount_paid', 0) or 0)) for r in rent_res.data])
     total_due = elec_due + rent_due
@@ -744,7 +726,7 @@ def tenant_dashboard(user_details):
 # --- 6. MAIN ---
 def main():
     if 'user' not in st.session_state:
-        c1, c2, c3 = st.columns([1, 2, 1]) # Center content
+        c1, c2, c3 = st.columns([1, 2, 1]) 
         with c2:
             tab1, tab2 = st.tabs(["Login", "Register"])
             with tab1: login()
