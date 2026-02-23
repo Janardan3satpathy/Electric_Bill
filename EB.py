@@ -157,16 +157,28 @@ def admin_dashboard(user_details):
         # We still want to render Tab 7 so they can create the property!
         with tab7:
             st.subheader("⚙️ Property Settings")
+            with st.expander("➕ Add New Property"):
             with st.form("add_prop_form"):
                 new_prop_name = st.text_input("New Property Name")
                 new_prop_addr = st.text_input("Property Address")
                 if st.form_submit_button("Create Property"):
-                    conn.table("properties").insert({
-                        "owner_id": user_details['id'], "property_name": new_prop_name, "address": new_prop_addr,
-                        "water_billing_mode": "S. Vihar Style (Shared)", "electricity_billing_mode": "Dynamic Main Meter"
-                    }).execute()
-                    st.success("Property created! Please refresh.")
-                    st.rerun()
+                    try:
+                        # Capture the result to check for errors
+                        res = conn.table("properties").insert({
+                            "owner_id": user_details['id'], 
+                            "property_name": new_prop_name, 
+                            "address": new_prop_addr,
+                            "water_billing_mode": "S. Vihar Style (Shared)", 
+                            "electricity_billing_mode": "Dynamic Main Meter"
+                        }).execute()
+                        
+                        # If we get here, it worked!
+                        st.success(f"✅ Property '{new_prop_name}' created successfully!")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        # This will tell us EXACTLY why it's not confirming
+                        st.error(f"❌ Database Error: {e}")
         return
 
     users_resp = conn.table("profiles").select("*").eq("role", "tenant").eq("property_id", active_prop_id).order("flat_number").execute() if active_prop_id else None
@@ -589,3 +601,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
