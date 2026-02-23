@@ -157,7 +157,7 @@ def admin_dashboard(user_details):
         # We still want to render Tab 7 so they can create the property!
         with tab7:
             st.subheader("⚙️ Property Settings")
-            with st.expander("➕ Add New Property"):
+                with st.expander("➕ Add New Property"):
             with st.form("add_prop_form"):
                 new_prop_name = st.text_input("New Property Name")
                 new_prop_addr = st.text_input("Property Address")
@@ -601,4 +601,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
