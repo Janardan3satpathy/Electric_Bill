@@ -30,7 +30,7 @@ def ensure_profile_exists(user_id, email):
     except:
         return None
 
-# --- NEW: LOGOUT DIALOG (MODAL) ---
+# --- LOGOUT DIALOG (MODAL) ---
 @st.dialog("⚠️ Confirm Logout")
 def show_logout_dialog():
     st.write("Are you sure you want to end your session?")
@@ -42,13 +42,13 @@ def show_logout_dialog():
         perform_logout()
         
     if col2.button("❌ No, Stay", use_container_width=True):
-        st.rerun() # Closes the dialog
+        st.rerun()
 
 def perform_logout():
     conn.auth.sign_out()
     st.session_state.clear()
     st.toast("Thank you for visiting the app! Visit again soon. 👋", icon="👋")
-    time.sleep(1.5) # Give time to read toast
+    time.sleep(1.5)
     st.rerun()
 
 def render_top_nav(profile):
@@ -60,7 +60,6 @@ def render_top_nav(profile):
     with col_logout:
         st.write("") 
         st.write("") 
-        # Clicking this now opens the MODAL dialog
         if st.button("Logout", type="secondary", use_container_width=True):
             show_logout_dialog()
 
@@ -443,7 +442,7 @@ def admin_dashboard(user_details):
             except Exception as e:
                 st.error(f"❌ Error: {e}")
 
-    # --- TAB 4: GENERATE BILLS (UPDATED LOGIC) ---
+    # --- TAB 4: GENERATE BILLS ---
     with tab4:
         st.subheader("Generate Monthly Bills")
         col_gen1, col_gen2 = st.columns(2)
@@ -451,14 +450,20 @@ def admin_dashboard(user_details):
         
         st.markdown("### 📊 Financial Overview for Month")
         admin_paid = 0
-        mm_res = conn.table("main_meters").select("total_bill_amount").eq("bill_month", str(gen_date)).execute()
-        if mm_res.data:
-            admin_paid = sum([m['total_bill_amount'] for m in mm_res.data])
+        try:
+            mm_res_fin = conn.table("main_meters").select("total_bill_amount").eq("bill_month", str(gen_date)).execute()
+            if mm_res_fin.data:
+                admin_paid = sum([m['total_bill_amount'] for m in mm_res_fin.data])
+        except Exception as e:
+            st.error(f"🚨 DATABASE ERROR (Fetching Main Meters for Overview): {e}")
             
         tenant_recovery = 0
-        bills_res = conn.table("bills").select("total_amount").eq("bill_month", str(gen_date)).execute()
-        if bills_res.data:
-            tenant_recovery = sum([b['total_amount'] for b in bills_res.data])
+        try:
+            bills_res = conn.table("bills").select("total_amount").eq("bill_month", str(gen_date)).execute()
+            if bills_res.data:
+                tenant_recovery = sum([b['total_amount'] for b in bills_res.data])
+        except Exception as e:
+            pass # Silent pass here as it just means bills aren't generated yet
             
         f1, f2 = st.columns(2)
         f1.metric("💸 Total Admin Payment", f"₹{admin_paid}")
@@ -467,25 +472,35 @@ def admin_dashboard(user_details):
         st.divider()
         col_A, col_B = st.columns(2)
         
-        # --- ELECTRICITY GENERATION (UPDATED ACTIVE TENANT LOGIC) ---
+        # --- ELECTRICITY GENERATION ---
         with col_A:
             st.markdown("### ⚡ Electricity Generation")
             rates_data = {}
             water_stats = {"units": 0, "rate": 0}
+            
+            # Replaced silent error block to reveal exact DB errors
             try:
-                for m in mm_res.data:
-                    rates_data[m['meter_name']] = m['calculated_rate']
-                    if m['meter_name'] == "Ground Meter":
-                        water_stats["units"] = m.get('water_units', 0)
-                        water_stats["rate"] = m.get('calculated_rate', 0)
-            except: pass
+                mm_res_full = conn.table("main_meters").select("*").eq("bill_month", str(gen_date)).execute()
+                if mm_res_full.data:
+                    for m in mm_res_full.data:
+                        rates_data[m['meter_name']] = m['calculated_rate']
+                        if m['meter_name'] == "Ground Meter":
+                            water_stats["units"] = m.get('water_units', 0)
+                            water_stats["rate"] = m.get('calculated_rate', 0)
+            except Exception as e:
+                st.error(f"🚨 DATABASE ERROR (Fetching Main Meters Details): {e}")
 
             if not rates_data:
-                st.warning("⚠️ Meters not saved for this date.")
+                st.warning("⚠️ Meters not saved for this exact date.")
             else:
                 water_rate = rates_data.get('Ground Meter', 0)
-                sub_res_all = conn.table("sub_meter_readings").select("*").eq("bill_month", str(gen_date)).execute()
-                sub_map = {row['flat_number']: row for row in sub_res_all.data} if sub_res_all.data else {}
+                
+                try:
+                    sub_res_all = conn.table("sub_meter_readings").select("*").eq("bill_month", str(gen_date)).execute()
+                    sub_map = {row['flat_number']: row for row in sub_res_all.data} if sub_res_all.data else {}
+                except Exception as e:
+                    st.error(f"🚨 DATABASE ERROR (Fetching Sub Meters): {e}")
+                    sub_map = {}
                 
                 processed_tenants = []
                 total_active_people = 0
