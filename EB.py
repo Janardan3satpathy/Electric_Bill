@@ -5,6 +5,7 @@ from st_supabase_connection import SupabaseConnection
 import random
 import math
 import time
+import urllib.parse
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="S. Vihar Property Manager", page_icon="🏠", layout="wide")
@@ -220,7 +221,6 @@ def admin_dashboard(user_details):
                     already_paid = r.get('amount_paid', 0) or 0
                     total_amount = r['amount']
                     remaining = total_amount - already_paid
-                    
                     status_label = f" (Paid: ₹{already_paid})" if already_paid > 0 else ""
                     
                     with st.expander(f"Pay Rent: {r['bill_month']} | Due: ₹{remaining}{status_label}"):
@@ -304,7 +304,18 @@ def admin_dashboard(user_details):
         st.subheader("Tenant Allotment & Rent Settings")
         if users_resp.data:
             df_users = pd.DataFrame(users_resp.data)
-            st.dataframe(df_users[['full_name', 'flat_number', 'rent_amount', 'mobile']], hide_index=True)
+            
+            # --- UPDATED: Showing Num People with nice column names ---
+            df_display = df_users[['full_name', 'flat_number', 'num_people', 'rent_amount', 'mobile']].rename(
+                columns={
+                    'full_name': 'Name', 
+                    'flat_number': 'Flat', 
+                    'num_people': 'People Count', 
+                    'rent_amount': 'Rent (₹)', 
+                    'mobile': 'Mobile'
+                }
+            )
+            st.dataframe(df_display, hide_index=True, use_container_width=True)
             
             st.divider()
             st.write("### Edit Tenant Profile")
@@ -463,7 +474,7 @@ def admin_dashboard(user_details):
             if bills_res.data:
                 tenant_recovery = sum([b['total_amount'] for b in bills_res.data])
         except Exception as e:
-            pass # Silent pass here as it just means bills aren't generated yet
+            pass
             
         f1, f2 = st.columns(2)
         f1.metric("💸 Total Admin Payment", f"₹{admin_paid}")
@@ -472,13 +483,11 @@ def admin_dashboard(user_details):
         st.divider()
         col_A, col_B = st.columns(2)
         
-        # --- ELECTRICITY GENERATION ---
         with col_A:
             st.markdown("### ⚡ Electricity Generation")
             rates_data = {}
             water_stats = {"units": 0, "rate": 0}
             
-            # Replaced silent error block to reveal exact DB errors
             try:
                 mm_res_full = conn.table("main_meters").select("*").eq("bill_month", str(gen_date)).execute()
                 if mm_res_full.data:
@@ -642,15 +651,48 @@ def admin_dashboard(user_details):
             for t in all_tenants.data:
                 uid = t['id']
                 rent_pending = get_user_total(uid, all_pending_rent.data, 'amount')
-                elec_pending = get_user_total(uid, all_pending_elec.data, 'total_amount')
-                total = rent_pending + elec_pending
                 
+                # --- NEW WHATSAPP LOGIC (ELECTRICITY ONLY) ---
+                user_elec_bills = [b for b in all_pending_elec.data if b['user_id'] == uid]
+                elec_pending = 0
+                breakdown_text = ""
+                valid_bills_count = 0
+
+                for b in user_elec_bills:
+                    rem = b['total_amount'] - (b.get('amount_paid', 0) or 0)
+                    if rem > 0:
+                        elec_pending += rem
+                        breakdown_text += f"- {b['bill_month']}: ₹{rem}\n"
+                        valid_bills_count += 1
+                
+                total = rent_pending + elec_pending
+                wa_link = None
+                
+                if elec_pending > 0:
+                    mobile = str(t.get('mobile', '')).strip()
+                    if len(mobile) == 10: mobile = "91" + mobile
+                    elif mobile.startswith("+"): mobile = mobile[1:]
+                    
+                    if mobile:
+                        msg = f"Hello {t['full_name']},\n\nThis is a gentle reminder from S. Vihar Management regarding your pending Electricity dues.\n\n"
+                        
+                        if valid_bills_count == 1:
+                            msg += f"Pending {breakdown_text}"
+                        else:
+                            msg += f"Breakdown of pending months:\n{breakdown_text}\n*Total Electricity Due: ₹{elec_pending}*\n"
+                            
+                        msg += "\nPlease clear the dues at the earliest. Thank you!"
+                        safe_msg = urllib.parse.quote(msg)
+                        wa_link = f"https://wa.me/{mobile}?text={safe_msg}"
+                # ----------------------------------------------
+
                 summary_data.append({
                     "Tenant Name": t['full_name'],
                     "Flat Number": t.get('flat_number', 'N/A'),
                     "Rent Pending (₹)": rent_pending,
                     "Electricity Pending (₹)": elec_pending,
-                    "Total Due (₹)": total
+                    "Total Due (₹)": total,
+                    "WhatsApp Link": wa_link
                 })
         
         if summary_data:
@@ -660,7 +702,8 @@ def admin_dashboard(user_details):
                 "Flat Number": ["-"],
                 "Rent Pending (₹)": [df_summary["Rent Pending (₹)"].sum()],
                 "Electricity Pending (₹)": [df_summary["Electricity Pending (₹)"].sum()],
-                "Total Due (₹)": [df_summary["Total Due (₹)"].sum()]
+                "Total Due (₹)": [df_summary["Total Due (₹)"].sum()],
+                "WhatsApp Link": [None]
             })
             df_final = pd.concat([df_summary, total_row], ignore_index=True)
             
@@ -670,6 +713,12 @@ def admin_dashboard(user_details):
                     "Electricity Pending (₹)": "₹{:.2f}", 
                     "Total Due (₹)": "₹{:.2f}"
                 }).apply(lambda x: ['font-weight: bold' if x.name == len(df_final)-1 else '' for i in x], axis=1), 
+                column_config={
+                    "WhatsApp Link": st.column_config.LinkColumn(
+                        "Send Reminder", 
+                        display_text="📱 WhatsApp"
+                    )
+                },
                 hide_index=True, use_container_width=True
             )
         else:
