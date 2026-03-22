@@ -674,14 +674,14 @@ def admin_dashboard(user_details):
                     elif mobile.startswith("+"): mobile = mobile[1:]
                     
                     if mobile:
-                        msg = f"Hello {t['full_name']},\n\nThis is a gentle reminder from S. Vihar Management regarding your pending Electricity dues.\n\n"
+                        msg = f"Hello,\n\nThis is a gentle reminder regarding your Electricity dues.\n\n"
                         
                         if valid_bills_count == 1:
                             msg += f"Pending {breakdown_text}"
                         else:
                             msg += f"Breakdown of pending months:\n{breakdown_text}\n*Total Electricity Due: ₹{elec_pending}*\n"
                             
-                        msg += "\nPlease clear the dues at the earliest. Thank you!"
+                        msg += "\nThank you"
                         safe_msg = urllib.parse.quote(msg)
                         wa_link = f"https://wa.me/{mobile}?text={safe_msg}"
                 # ----------------------------------------------
